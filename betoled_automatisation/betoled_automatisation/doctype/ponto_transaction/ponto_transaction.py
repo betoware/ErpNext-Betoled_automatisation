@@ -108,3 +108,5 @@ class PontoTransaction(Document):
 		frappe.msgprint("Transaction marked as ignored.", indicator="orange")
 
 
+
+
