@@ -10,12 +10,20 @@ import frappe
 
 def after_install():
 	"""Run after app installation"""
+	frappe.logger().info("betoled_automatisation: Running after_install()")
 	print("=" * 50)
 	print("betoled_automatisation: Running after_install()")
 	print("=" * 50)
 	
-	_setup_custom_fields()
-	_create_default_settings()
+	try:
+		_setup_custom_fields()
+		_create_default_settings()
+	except Exception as e:
+		frappe.log_error(
+			title="betoled_automatisation install error",
+			message=f"Error during after_install: {str(e)}\n{frappe.get_traceback()}"
+		)
+		print(f"Error during installation: {e}")
 	
 	print("=" * 50)
 	print("betoled_automatisation: Installation complete!")
@@ -24,8 +32,17 @@ def after_install():
 
 def after_migrate():
 	"""Run after app migration"""
+	frappe.logger().info("betoled_automatisation: Running after_migrate()")
 	print("betoled_automatisation: Running after_migrate()")
-	_setup_custom_fields()
+	
+	try:
+		_setup_custom_fields()
+	except Exception as e:
+		frappe.log_error(
+			title="betoled_automatisation migrate error",
+			message=f"Error during after_migrate: {str(e)}\n{frappe.get_traceback()}"
+		)
+		print(f"Error during migration: {e}")
 
 
 def _setup_custom_fields():
@@ -35,7 +52,20 @@ def _setup_custom_fields():
 	Note: The gestructureerde_mededeling field is already managed by 
 	betoled_peppol app, so we don't create it here.
 	"""
-	pass  # No additional custom fields needed at this time
+	# Ensure the module is registered
+	try:
+		if not frappe.db.exists("Module Def", "Betoled Automatisation"):
+			module_def = frappe.get_doc({
+				"doctype": "Module Def",
+				"module_name": "Betoled Automatisation",
+				"app_name": "betoled_automatisation"
+			})
+			module_def.insert(ignore_permissions=True)
+			frappe.db.commit()
+			print("  Created Module Def for Betoled Automatisation")
+	except Exception as e:
+		# Module might already exist or be created by the framework
+		pass
 
 
 def _create_default_settings():
@@ -43,24 +73,23 @@ def _create_default_settings():
 	Create placeholder Ponto Settings for the known companies.
 	This makes it easier for users to configure the integration.
 	"""
-	companies = ["BETOWARE", "LASTAMAR"]
+	# First check if the DocType exists
+	if not frappe.db.exists("DocType", "Ponto Settings"):
+		print("  Ponto Settings DocType not yet created, skipping default settings")
+		return
+	
+	companies = ["BETOWARE", "LASTAMAR", "Lastamar"]  # Include variations
 	
 	for company_name in companies:
 		# Check if company exists
 		if not frappe.db.exists("Company", company_name):
-			print(f"  Company {company_name} does not exist, skipping settings creation")
 			continue
 		
-		# Check if settings already exist
-		if frappe.db.exists("Ponto Settings", {"company": company_name}):
+		# Check if settings already exist (using company field)
+		existing = frappe.db.exists("Ponto Settings", {"company": company_name})
+		if existing:
 			print(f"  Ponto Settings for {company_name} already exists")
 			continue
-		
-		# Check if company has a default bank account
-		company = frappe.get_doc("Company", company_name)
-		if not company.default_bank_account:
-			print(f"  Warning: {company_name} has no default bank account configured")
-			print(f"  Please configure the default bank account before enabling Ponto")
 		
 		# Create placeholder settings (disabled by default)
 		try:
@@ -74,12 +103,13 @@ def _create_default_settings():
 				"auto_reconcile_exact_matches": 1
 			})
 			settings.flags.ignore_mandatory = True  # Skip validation for placeholder
+			settings.flags.ignore_validate = True
 			settings.insert(ignore_permissions=True)
 			
 			print(f"  Created Ponto Settings placeholder for {company_name}")
-			print(f"  Please configure API credentials and enable the integration")
+		except frappe.exceptions.DuplicateEntryError:
+			print(f"  Ponto Settings for {company_name} already exists (duplicate)")
 		except Exception as e:
 			print(f"  Could not create settings for {company_name}: {e}")
 	
 	frappe.db.commit()
-
