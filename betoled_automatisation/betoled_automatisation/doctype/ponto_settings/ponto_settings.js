@@ -52,19 +52,45 @@ frappe.ui.form.on("Ponto Settings", {
 	company(frm) {
 		// When company changes, try to fetch the IBAN
 		if (frm.doc.company) {
-			frappe.db.get_value("Company", frm.doc.company, "default_bank_account", (r) => {
-				if (r && r.default_bank_account) {
-					frappe.db.get_value("Bank Account", r.default_bank_account, "iban", (r2) => {
-						if (r2 && r2.iban) {
-							frm.set_value("iban", r2.iban);
-						}
-					});
-				} else {
-					frappe.msgprint({
-						title: __("Warning"),
-						indicator: "orange",
-						message: __("Company {0} does not have a default bank account configured. Please set up the default bank account first.", [frm.doc.company])
-					});
+			frappe.call({
+				method: "frappe.client.get_value",
+				args: {
+					doctype: "Company",
+					filters: { name: frm.doc.company },
+					fieldname: "default_bank_account"
+				},
+				callback: function(r) {
+					if (r.message && r.message.default_bank_account) {
+						let bank_account_name = r.message.default_bank_account;
+						
+						// Use frappe.call instead of frappe.db.get_value for better error handling
+						frappe.call({
+							method: "frappe.client.get_value",
+							args: {
+								doctype: "Bank Account",
+								filters: { name: bank_account_name },
+								fieldname: ["iban", "bank_account_no"]
+							},
+							callback: function(r2) {
+								if (r2.message) {
+									let iban = r2.message.iban || r2.message.bank_account_no;
+									if (iban) {
+										frm.set_value("iban", iban.replace(/\s/g, "").toUpperCase());
+									}
+								}
+							},
+							error: function(e) {
+								// Silently ignore errors - IBAN can be set manually or during save
+								console.log("Could not fetch bank account details:", e);
+							}
+						});
+					} else {
+						frappe.msgprint({
+							title: __("Warning"),
+							indicator: "orange",
+							message: __("Company {0} does not have a default bank account configured. Please set up the default bank account first.", [frm.doc.company])
+						});
+					}
 				}
 			});
 		}

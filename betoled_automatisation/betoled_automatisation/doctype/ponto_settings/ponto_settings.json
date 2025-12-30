@@ -109,11 +109,10 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "IBAN of the bank account (fetched from Company's Default Bank Account)",
+   "description": "IBAN of the bank account. Auto-filled from Company's Default Bank Account, but can be edited manually if needed.",
    "fieldname": "iban",
    "fieldtype": "Data",
-   "label": "IBAN",
-   "read_only": 1
+   "label": "IBAN"
   },
   {
    "fieldname": "section_break_settings",
