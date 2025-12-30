@@ -5,10 +5,17 @@
 Ponto API Client for Isabel Group's Ponto service.
 
 Ponto API Documentation: https://documentation.ibanity.com/ponto-connect/api
+
+IMPORTANT: Ponto/Ibanity requires mTLS (mutual TLS) authentication.
+You need both:
+- Client credentials (client_id, client_secret)
+- SSL certificate and private key
 """
 
 import frappe
 import requests
+import tempfile
+import os
 from datetime import datetime, timedelta
 from frappe.utils import now_datetime, get_datetime
 
@@ -26,7 +33,9 @@ class PontoAPI:
 	"""
 	Ponto API Client for fetching bank transactions.
 	
-	Ponto uses OAuth2 for authentication. This client handles:
+	Ponto uses OAuth2 for authentication WITH mTLS (mutual TLS).
+	This client handles:
+	- SSL certificate management for mTLS
 	- OAuth2 token management (obtaining and refreshing tokens)
 	- Fetching financial institution accounts
 	- Fetching transactions from accounts
@@ -52,12 +61,139 @@ class PontoAPI:
 		self.access_token = None
 		self.token_expiry = None
 		
+		# Certificate paths (will be set up when needed)
+		self._cert_file = None
+		self._key_file = None
+		self._temp_files = []
+		
 		# Load existing token if valid
 		if settings.access_token and settings.token_expiry:
 			expiry = get_datetime(settings.token_expiry)
 			if expiry > now_datetime():
 				self.access_token = settings.get_password("access_token")
 				self.token_expiry = expiry
+	
+	def __del__(self):
+		"""Cleanup temporary certificate files"""
+		self._cleanup_temp_files()
+	
+	def _cleanup_temp_files(self):
+		"""Remove temporary certificate files"""
+		for temp_file in self._temp_files:
+			try:
+				if os.path.exists(temp_file):
+					os.unlink(temp_file)
+			except Exception:
+				pass
+		self._temp_files = []
+	
+	def _get_certificate_paths(self):
+		"""
+		Get paths to certificate and private key files.
+		Downloads from Frappe file system and creates temp files if needed.
+		
+		Returns:
+			tuple: (cert_path, key_path) or None if not configured
+		"""
+		if self._cert_file and self._key_file:
+			if os.path.exists(self._cert_file) and os.path.exists(self._key_file):
+				return (self._cert_file, self._key_file)
+		
+		# Check if certificates are configured
+		if not self.settings.certificate or not self.settings.private_key:
+			return None
+		
+		try:
+			# Get certificate content
+			cert_content = self._get_file_content(self.settings.certificate)
+			key_content = self._get_file_content(self.settings.private_key)
+			
+			if not cert_content or not key_content:
+				return None
+			
+			# Create temporary files
+			cert_fd, self._cert_file = tempfile.mkstemp(suffix='.pem', prefix='ponto_cert_')
+			key_fd, self._key_file = tempfile.mkstemp(suffix='.pem', prefix='ponto_key_')
+			
+			self._temp_files.extend([self._cert_file, self._key_file])
+			
+			# Write certificate
+			with os.fdopen(cert_fd, 'wb') as f:
+				if isinstance(cert_content, str):
+					f.write(cert_content.encode('utf-8'))
+				else:
+					f.write(cert_content)
+			
+			# Write private key
+			with os.fdopen(key_fd, 'wb') as f:
+				if isinstance(key_content, str):
+					f.write(key_content.encode('utf-8'))
+				else:
+					f.write(key_content)
+			
+			# Set restrictive permissions on key file
+			os.chmod(self._key_file, 0o600)
+			
+			return (self._cert_file, self._key_file)
+			
+		except Exception as e:
+			frappe.log_error(
+				title="Ponto Certificate Error",
+				message=f"Failed to load certificates: {str(e)}\n{frappe.get_traceback()}"
+			)
+			return None
+	
+	def _get_file_content(self, file_url):
+		"""
+		Get content of an attached file.
+		
+		Args:
+			file_url: URL of the attached file (e.g., /files/cert.pem)
+			
+		Returns:
+			bytes: File content
+		"""
+		if not file_url:
+			return None
+		
+		try:
+			# Check if it's a file URL
+			if file_url.startswith('/files/') or file_url.startswith('/private/files/'):
+				# Get file from Frappe file system
+				file_doc = frappe.get_doc("File", {"file_url": file_url})
+				return file_doc.get_content()
+			elif file_url.startswith('http'):
+				# It's a full URL, download it
+				response = requests.get(file_url, timeout=30)
+				return response.content
+			else:
+				# Assume it's a file path
+				with open(file_url, 'rb') as f:
+					return f.read()
+		except Exception as e:
+			frappe.log_error(
+				title="Ponto File Error",
+				message=f"Failed to read file {file_url}: {str(e)}"
+			)
+			return None
+	
+	def _get_request_kwargs(self):
+		"""
+		Get common kwargs for requests, including SSL certificates if configured.
+		
+		Returns:
+			dict: kwargs for requests
+		"""
+		kwargs = {
+			"timeout": 60,
+			"verify": True  # Always verify server certificate
+		}
+		
+		cert_paths = self._get_certificate_paths()
+		if cert_paths:
+			kwargs["cert"] = cert_paths
+		
+		return kwargs
 	
 	def get_access_token(self):
 		"""
@@ -82,6 +218,9 @@ class PontoAPI:
 			str: New access token
 		"""
 		try:
+			request_kwargs = self._get_request_kwargs()
+			request_kwargs["timeout"] = 30
+			
 			response = requests.post(
 				self.AUTH_URL,
 				data={
@@ -93,11 +232,15 @@ class PontoAPI:
 					"Content-Type": "application/x-www-form-urlencoded",
 					"Accept": "application/json"
 				},
-				timeout=30
+				**request_kwargs
 			)
 			
 			if response.status_code != 200:
-				error_detail = response.json() if response.text else {}
+				error_detail = {}
+				try:
+					error_detail = response.json() if response.text else {}
+				except:
+					pass
 				raise PontoAPIError(
 					f"Failed to obtain access token: {error_detail.get('error_description', response.text)}",
 					status_code=response.status_code,
@@ -115,6 +258,15 @@ class PontoAPI:
 			
 			return self.access_token
 			
+		except requests.exceptions.SSLError as e:
+			error_msg = str(e)
+			if "certificate required" in error_msg.lower() or "tlsv13_alert_certificate_required" in error_msg.lower():
+				raise PontoAPIError(
+					"SSL Certificate required. Please upload your Ponto client certificate and private key "
+					"in the Ponto Settings under 'SSL Certificates (mTLS)' section.\n\n"
+					"You can obtain these from your Ponto/Ibanity dashboard."
+				)
+			raise PontoAPIError(f"SSL Error: {str(e)}")
 		except requests.RequestException as e:
 			raise PontoAPIError(f"Network error while obtaining token: {str(e)}")
 	
@@ -160,6 +312,8 @@ class PontoAPI:
 			"Content-Type": "application/json"
 		}
 		
+		request_kwargs = self._get_request_kwargs()
+		
 		try:
 			response = requests.request(
 				method=method,
@@ -167,7 +321,7 @@ class PontoAPI:
 				headers=headers,
 				params=params,
 				json=data,
-				timeout=60
+				**request_kwargs
 			)
 			
 			if response.status_code == 401:
@@ -182,11 +336,15 @@ class PontoAPI:
 					headers=headers,
 					params=params,
 					json=data,
-					timeout=60
+					**request_kwargs
 				)
 			
 			if response.status_code not in [200, 201, 204]:
-				error_detail = response.json() if response.text else {}
+				error_detail = {}
+				try:
+					error_detail = response.json() if response.text else {}
+				except:
+					pass
 				raise PontoAPIError(
 					f"API request failed: {error_detail.get('errors', response.text)}",
 					status_code=response.status_code,
@@ -198,6 +356,13 @@ class PontoAPI:
 			
 			return response.json()
 			
+		except requests.exceptions.SSLError as e:
+			error_msg = str(e)
+			if "certificate required" in error_msg.lower():
+				raise PontoAPIError(
+					"SSL Certificate required. Please upload your client certificate and private key."
+				)
+			raise PontoAPIError(f"SSL Error: {str(e)}")
 		except requests.RequestException as e:
 			raise PontoAPIError(f"Network error: {str(e)}")
 	
@@ -280,7 +445,6 @@ class PontoAPI:
 				break
 			
 			# Extract cursor from next link
-			# The next link contains the full URL, we need to extract the after parameter
 			import urllib.parse as urlparse
 			parsed = urlparse.urlparse(next_link)
 			query_params = urlparse.parse_qs(parsed.query)
@@ -339,4 +503,3 @@ class PontoAPI:
 		})
 		
 		return response
-

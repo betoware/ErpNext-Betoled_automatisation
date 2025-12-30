@@ -16,6 +16,10 @@
   "column_break_credentials",
   "access_token",
   "token_expiry",
+  "section_break_certificates",
+  "certificate",
+  "private_key",
+  "certificate_passphrase",
   "section_break_account",
   "ponto_organization_id",
   "ponto_account_id",
@@ -86,6 +90,30 @@
    "hidden": 1,
    "label": "Token Expiry",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_break_certificates",
+   "fieldtype": "Section Break",
+   "label": "SSL Certificates (mTLS)",
+   "description": "Ponto/Ibanity requires mutual TLS. Upload your client certificate and private key."
+  },
+  {
+   "fieldname": "certificate",
+   "fieldtype": "Attach",
+   "label": "Client Certificate (.pem)",
+   "description": "Upload your client certificate file (PEM format)"
+  },
+  {
+   "fieldname": "private_key",
+   "fieldtype": "Attach",
+   "label": "Private Key (.pem)",
+   "description": "Upload your private key file (PEM format)"
+  },
+  {
+   "fieldname": "certificate_passphrase",
+   "fieldtype": "Password",
+   "label": "Private Key Passphrase",
+   "description": "Optional: passphrase if your private key is encrypted"
   },
   {
    "fieldname": "section_break_account",
