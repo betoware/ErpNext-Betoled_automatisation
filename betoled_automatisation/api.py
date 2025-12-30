@@ -52,6 +52,9 @@ def get_unmatched_transactions(company=None, limit=50):
 	Returns:
 		list: List of unmatched Ponto Transaction records
 	"""
+	# Convert limit to int (comes as string from JS)
+	limit = int(limit) if limit else 50
+	
 	filters = {
 		"status": "Pending",
 		"credit_debit": "Credit"  # Only incoming payments
@@ -70,7 +73,7 @@ def get_unmatched_transactions(company=None, limit=50):
 			"match_status", "match_notes"
 		],
 		order_by="transaction_date desc",
-		limit=limit
+		limit_page_length=limit
 	)
 	
 	return transactions
@@ -89,6 +92,9 @@ def get_reconciliation_summary(company=None, days=30):
 		dict: Summary statistics
 	"""
 	from frappe.utils import add_days, today
+	
+	# Convert days to int (comes as string from JS)
+	days = int(days) if days else 30
 	
 	start_date = add_days(today(), -days)
 	
