@@ -52,6 +52,8 @@ def _setup_custom_fields():
 	Note: The gestructureerde_mededeling field is already managed by 
 	betoled_peppol app, so we don't create it here.
 	"""
+	from frappe.custom.doctype.custom_field.custom_field import create_custom_fields
+	
 	# Ensure the module is registered
 	try:
 		if not frappe.db.exists("Module Def", "Betoled Automatisation"):
@@ -66,6 +68,28 @@ def _setup_custom_fields():
 	except Exception as e:
 		# Module might already exist or be created by the framework
 		pass
+	
+	# Create custom_alias field on Customer for fuzzy matching
+	custom_fields = {
+		"Customer": [
+			{
+				"fieldname": "custom_alias",
+				"label": "Payment Aliases",
+				"fieldtype": "Small Text",
+				"insert_after": "customer_name",
+				"description": "Comma-separated list of alternative names this customer might use for bank payments (for fuzzy matching)"
+			}
+		]
+	}
+	
+	# Check if field already exists
+	if not frappe.db.exists("Custom Field", {"dt": "Customer", "fieldname": "custom_alias"}):
+		try:
+			create_custom_fields(custom_fields, update=True)
+			print("  Created custom_alias field on Customer")
+			frappe.db.commit()
+		except Exception as e:
+			print(f"  Could not create custom_alias field: {e}")
 
 
 def _create_default_settings():

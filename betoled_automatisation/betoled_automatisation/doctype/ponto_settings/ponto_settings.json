@@ -23,7 +23,12 @@
   "section_break_settings",
   "auto_reconcile_exact_matches",
   "column_break_settings",
-  "days_to_fetch"
+  "days_to_fetch",
+  "section_break_fuzzy",
+  "amount_tolerance_percent",
+  "fuzzy_match_threshold",
+  "column_break_fuzzy",
+  "enable_fuzzy_matching"
  ],
  "fields": [
   {
@@ -129,6 +134,36 @@
    "fieldname": "days_to_fetch",
    "fieldtype": "Int",
    "label": "Days to Fetch"
+  },
+  {
+   "fieldname": "section_break_fuzzy",
+   "fieldtype": "Section Break",
+   "label": "Fuzzy Matching Settings (Phase 2)"
+  },
+  {
+   "default": "5",
+   "description": "Maximum percentage the payment amount may differ from the invoice amount (e.g., 5 = allow 5% difference)",
+   "fieldname": "amount_tolerance_percent",
+   "fieldtype": "Float",
+   "label": "Amount Tolerance (%)"
+  },
+  {
+   "default": "80",
+   "description": "Minimum similarity score (0-100) for fuzzy name matching. Higher = stricter matching.",
+   "fieldname": "fuzzy_match_threshold",
+   "fieldtype": "Int",
+   "label": "Fuzzy Match Threshold (%)"
+  },
+  {
+   "fieldname": "column_break_fuzzy",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Enable Phase 2 matching (amount + fuzzy name) when structured reference matching fails",
+   "fieldname": "enable_fuzzy_matching",
+   "fieldtype": "Check",
+   "label": "Enable Fuzzy Matching"
   }
  ],
  "index_web_pages_for_search": 1,

@@ -4,8 +4,9 @@
 """
 Payment matching logic for reconciling bank transactions with Sales Invoices.
 
-The matching is primarily based on the Belgian structured reference
-(gestructureerde mededeling) which is stored on Sales Invoices.
+Two-phase matching:
+Phase 1: Match by Belgian structured reference (gestructureerde mededeling)
+Phase 2: Match by amount (within tolerance) + fuzzy name matching
 """
 
 import frappe
@@ -21,12 +22,14 @@ class MatchResult:
 	NO_MATCH = "No Match"
 	MULTIPLE_MATCHES = "Multiple Matches"
 	AMOUNT_MISMATCH = "Amount Mismatch"
+	FUZZY_MATCH = "Fuzzy Match"
 	
-	def __init__(self, match_type, invoice=None, confidence=0, notes=None):
+	def __init__(self, match_type, invoice=None, confidence=0, notes=None, phase=1):
 		self.match_type = match_type
 		self.invoice = invoice
 		self.confidence = confidence
 		self.notes = notes or []
+		self.phase = phase  # 1 = structured ref, 2 = fuzzy
 	
 	def is_exact(self):
 		return self.match_type == self.EXACT_MATCH
@@ -35,20 +38,126 @@ class MatchResult:
 		return self.match_type not in [self.EXACT_MATCH, self.NO_MATCH]
 
 
+def fuzzy_match_score(s1, s2):
+	"""
+	Calculate fuzzy match score between two strings.
+	Returns a score between 0 and 100.
+	
+	Uses a simple but effective approach:
+	1. Normalize strings (lowercase, remove extra spaces)
+	2. Check for exact match
+	3. Check if one contains the other
+	4. Calculate Levenshtein-based similarity
+	"""
+	if not s1 or not s2:
+		return 0
+	
+	# Normalize
+	s1 = ' '.join(s1.lower().split())
+	s2 = ' '.join(s2.lower().split())
+	
+	# Exact match
+	if s1 == s2:
+		return 100
+	
+	# One contains the other
+	if s1 in s2 or s2 in s1:
+		shorter = min(len(s1), len(s2))
+		longer = max(len(s1), len(s2))
+		return int((shorter / longer) * 100)
+	
+	# Word overlap
+	words1 = set(s1.split())
+	words2 = set(s2.split())
+	
+	if words1 and words2:
+		common = words1.intersection(words2)
+		total = words1.union(words2)
+		word_score = (len(common) / len(total)) * 100
+		
+		# Boost score if significant words match
+		significant_common = [w for w in common if len(w) > 3]
+		if significant_common:
+			word_score = min(100, word_score * 1.3)
+		
+		return int(word_score)
+	
+	# Fallback: character-based similarity (simplified Levenshtein ratio)
+	return _levenshtein_ratio(s1, s2)
+
+
+def _levenshtein_ratio(s1, s2):
+	"""Calculate similarity ratio based on Levenshtein distance"""
+	if not s1 or not s2:
+		return 0
+	
+	# Simple implementation for shorter strings
+	if len(s1) > 100 or len(s2) > 100:
+		# For very long strings, just use word overlap
+		return 0
+	
+	len1, len2 = len(s1), len(s2)
+	
+	# Create distance matrix
+	distances = [[0] * (len2 + 1) for _ in range(len1 + 1)]
+	
+	for i in range(len1 + 1):
+		distances[i][0] = i
+	for j in range(len2 + 1):
+		distances[0][j] = j
+	
+	for i in range(1, len1 + 1):
+		for j in range(1, len2 + 1):
+			cost = 0 if s1[i-1] == s2[j-1] else 1
+			distances[i][j] = min(
+				distances[i-1][j] + 1,      # deletion
+				distances[i][j-1] + 1,      # insertion
+				distances[i-1][j-1] + cost  # substitution
+			)
+	
+	distance = distances[len1][len2]
+	max_len = max(len1, len2)
+	
+	return int(((max_len - distance) / max_len) * 100)
+
+
 class PaymentMatcher:
 	"""
-	Matches bank transactions to Sales Invoices based on structured references
-	and amounts.
+	Matches bank transactions to Sales Invoices.
+	
+	Phase 1: Match by structured reference (gestructureerde mededeling)
+	Phase 2: Match by amount + fuzzy customer name matching
 	"""
 	
-	def __init__(self, company):
+	def __init__(self, company, settings=None):
 		"""
 		Initialize the matcher for a specific company.
 		
 		Args:
 			company: Company name
+			settings: Optional PontoSettings document
 		"""
 		self.company = company
+		self.settings = settings
+		self._load_settings()
+	
+	def _load_settings(self):
+		"""Load matching settings from Ponto Settings"""
+		if not self.settings:
+			try:
+				self.settings = frappe.get_doc("Ponto Settings", {"company": self.company})
+			except:
+				self.settings = None
+		
+		# Default settings
+		self.amount_tolerance_percent = 5.0
+		self.fuzzy_match_threshold = 80
+		self.enable_fuzzy_matching = True
+		
+		if self.settings:
+			self.amount_tolerance_percent = flt(self.settings.get("amount_tolerance_percent") or 5.0)
+			self.fuzzy_match_threshold = int(self.settings.get("fuzzy_match_threshold") or 80)
+			self.enable_fuzzy_matching = bool(self.settings.get("enable_fuzzy_matching", 1))
 	
 	def match_transaction(self, transaction):
 		"""
@@ -69,17 +178,37 @@ class PaymentMatcher:
 		
 		structured_ref = transaction.get("structured_reference")
 		amount = flt(transaction.get("amount"))
+		counterpart_name = transaction.get("counterpart_name", "")
 		
-		if not structured_ref:
-			# Try to find by remittance information
-			return self._match_by_remittance(transaction)
+		# ============ PHASE 1: Structured Reference Matching ============
+		if structured_ref:
+			result = self._match_by_structured_reference(structured_ref, amount)
+			if result.match_type != MatchResult.NO_MATCH:
+				result.phase = 1
+				result.notes.insert(0, "Phase 1: Matched by structured reference")
+				return result
 		
-		# First, try exact match by structured reference
-		return self._match_by_structured_reference(structured_ref, amount)
+		# ============ PHASE 2: Fuzzy Matching (Amount + Name) ============
+		if self.enable_fuzzy_matching and counterpart_name:
+			result = self._match_by_fuzzy(amount, counterpart_name)
+			if result.match_type != MatchResult.NO_MATCH:
+				result.phase = 2
+				result.notes.insert(0, "Phase 2: Matched by amount + customer name")
+				return result
+		
+		# No match found
+		return MatchResult(
+			MatchResult.NO_MATCH,
+			notes=[
+				f"No match found for payment of {amount}",
+				f"Counterpart: {counterpart_name}",
+				f"Structured ref: {structured_ref or 'None'}"
+			]
+		)
 	
 	def _match_by_structured_reference(self, structured_ref, amount):
 		"""
-		Match transaction by structured reference (gestructureerde mededeling).
+		Phase 1: Match transaction by structured reference (gestructureerde mededeling).
 		
 		Args:
 			structured_ref: 12-digit structured reference
@@ -98,7 +227,7 @@ class PaymentMatcher:
 			},
 			fields=[
 				"name", "grand_total", "outstanding_amount", 
-				"customer", "gestructureerde_mededeling", "status"
+				"customer", "customer_name", "gestructureerde_mededeling", "status"
 			]
 		)
 		
@@ -164,89 +293,125 @@ class PaymentMatcher:
 				]
 			)
 	
-	def _match_by_remittance(self, transaction):
+	def _match_by_fuzzy(self, amount, counterpart_name):
 		"""
-		Try to match by analyzing remittance information for invoice references.
+		Phase 2: Match by amount (within tolerance) and fuzzy customer name.
 		
 		Args:
-			transaction: Ponto Transaction
+			amount: Transaction amount
+			counterpart_name: Name from the bank transaction
 			
 		Returns:
 			MatchResult
 		"""
-		remittance = transaction.get("remittance_information", "")
+		# Calculate amount range
+		tolerance = self.amount_tolerance_percent / 100.0
+		min_amount = amount * (1 - tolerance)
+		max_amount = amount * (1 + tolerance)
 		
-		if not remittance:
+		# Find unpaid invoices within amount range
+		invoices = frappe.db.sql("""
+			SELECT 
+				si.name, si.grand_total, si.outstanding_amount,
+				si.customer, si.customer_name, si.status,
+				c.custom_alias
+			FROM `tabSales Invoice` si
+			LEFT JOIN `tabCustomer` c ON si.customer = c.name
+			WHERE si.company = %s
+			AND si.docstatus = 1
+			AND si.status IN ('Unpaid', 'Partly Paid', 'Overdue')
+			AND si.outstanding_amount BETWEEN %s AND %s
+		""", (self.company, min_amount, max_amount), as_dict=True)
+		
+		if not invoices:
 			return MatchResult(
 				MatchResult.NO_MATCH,
-				notes=["No structured reference or remittance information"]
+				notes=[f"No unpaid invoices found within {self.amount_tolerance_percent}% of {amount}"]
 			)
 		
-		# Try to extract invoice number patterns
-		# Common patterns: "Factuur XXX-YYYY-ZZZZ", "Invoice XXX-YYYY-ZZZZ"
-		import re
+		# Score each invoice based on name matching
+		matches = []
 		
-		# Pattern for invoice numbers like BIN-2024-0001 or LIN-2024-0001
-		invoice_patterns = [
-			r'([A-Z]{2,3}-\d{4}-\d{4})',  # XXX-YYYY-ZZZZ
-			r'Factuur[:\s]+([A-Z0-9-]+)',
-			r'Invoice[:\s]+([A-Z0-9-]+)',
-			r'Ref[:\s]+([A-Z0-9-]+)',
-		]
-		
-		for pattern in invoice_patterns:
-			matches = re.findall(pattern, remittance, re.IGNORECASE)
+		for inv in invoices:
+			best_score = 0
+			matched_name = ""
 			
-			for potential_invoice in matches:
-				# Check if this invoice exists
-				if frappe.db.exists("Sales Invoice", {
-					"name": potential_invoice.upper(),
-					"company": self.company,
-					"docstatus": 1
-				}):
-					invoice = frappe.get_doc("Sales Invoice", potential_invoice.upper())
-					amount = flt(transaction.get("amount"))
-					outstanding = flt(invoice.outstanding_amount)
-					
-					if invoice.status == "Paid":
-						continue
-					
-					if abs(amount - outstanding) < 0.01:
-						return MatchResult(
-							MatchResult.EXACT_MATCH,
-							invoice=invoice,
-							confidence=80,  # Lower confidence due to text matching
-							notes=[
-								f"Matched by invoice reference in remittance: {potential_invoice}",
-								"Note: Match based on text analysis, not structured reference"
-							]
-						)
-					elif amount < outstanding:
-						return MatchResult(
-							MatchResult.PARTIAL_PAYMENT,
-							invoice=invoice,
-							confidence=70,
-							notes=[
-								f"Partial payment matched by text: {potential_invoice}",
-								f"Payment {amount}, outstanding {outstanding}"
-							]
-						)
-					else:
-						return MatchResult(
-							MatchResult.OVERPAYMENT,
-							invoice=invoice,
-							confidence=60,
-							notes=[
-								f"Overpayment matched by text: {potential_invoice}",
-								f"Payment {amount}, outstanding {outstanding}"
-							]
-						)
+			# Check customer_name
+			score = fuzzy_match_score(counterpart_name, inv.customer_name)
+			if score > best_score:
+				best_score = score
+				matched_name = inv.customer_name
+			
+			# Check custom_alias (comma-separated list)
+			if inv.custom_alias:
+				aliases = [a.strip() for a in inv.custom_alias.split(",") if a.strip()]
+				for alias in aliases:
+					score = fuzzy_match_score(counterpart_name, alias)
+					if score > best_score:
+						best_score = score
+						matched_name = alias
+			
+			if best_score >= self.fuzzy_match_threshold:
+				# Calculate amount difference for confidence adjustment
+				outstanding = flt(inv.outstanding_amount)
+				amount_diff_pct = abs(amount - outstanding) / outstanding * 100 if outstanding else 100
+				
+				# Adjust confidence based on name score and amount match
+				confidence = int((best_score * 0.7) + ((100 - amount_diff_pct) * 0.3))
+				
+				matches.append({
+					"invoice": inv,
+					"name_score": best_score,
+					"matched_name": matched_name,
+					"amount_diff_pct": amount_diff_pct,
+					"confidence": confidence
+				})
+		
+		if not matches:
+			return MatchResult(
+				MatchResult.NO_MATCH,
+				notes=[
+					f"No matching customer found for '{counterpart_name}'",
+					f"Threshold: {self.fuzzy_match_threshold}%"
+				]
+			)
+		
+		# Sort by confidence
+		matches.sort(key=lambda x: x["confidence"], reverse=True)
+		
+		if len(matches) > 1 and matches[0]["confidence"] - matches[1]["confidence"] < 10:
+			# Multiple close matches - needs review
+			return MatchResult(
+				MatchResult.MULTIPLE_MATCHES,
+				invoice=matches[0]["invoice"],
+				confidence=matches[0]["confidence"],
+				notes=[
+					f"Multiple potential matches found:",
+					*[f"  - {m['invoice'].name}: {m['invoice'].customer_name} (score: {m['name_score']}%, amount diff: {m['amount_diff_pct']:.1f}%)" 
+					  for m in matches[:3]]
+				]
+			)
+		
+		best = matches[0]
+		inv = best["invoice"]
+		outstanding = flt(inv.outstanding_amount)
+		
+		# Determine match type based on amount
+		if abs(amount - outstanding) < 0.01:
+			match_type = MatchResult.FUZZY_MATCH
+		elif amount < outstanding:
+			match_type = MatchResult.PARTIAL_PAYMENT
+		else:
+			match_type = MatchResult.OVERPAYMENT
 		
 		return MatchResult(
-			MatchResult.NO_MATCH,
+			match_type,
+			invoice=inv,
+			confidence=best["confidence"],
 			notes=[
-				"Could not extract valid invoice reference from remittance",
-				f"Remittance: {remittance[:100]}..."
+				f"Fuzzy match: '{counterpart_name}' → '{best['matched_name']}' (score: {best['name_score']}%)",
+				f"Amount: {amount}, Outstanding: {outstanding} (diff: {best['amount_diff_pct']:.1f}%)",
+				f"Customer: {inv.customer_name}"
 			]
 		)
 	
@@ -267,21 +432,24 @@ class PaymentMatcher:
 		amount = flt(transaction.get("amount"))
 		counterpart = transaction.get("counterpart_name", "")
 		
-		# Find unpaid invoices with similar amounts
-		invoices = frappe.get_all(
-			"Sales Invoice",
-			filters={
-				"company": self.company,
-				"docstatus": 1,
-				"status": ["in", ["Unpaid", "Partly Paid", "Overdue"]],
-			},
-			fields=[
-				"name", "customer", "customer_name", "grand_total",
-				"outstanding_amount", "posting_date", "gestructureerde_mededeling"
-			],
-			order_by="posting_date desc",
-			limit=50
-		)
+		# Find unpaid invoices with similar amounts (wider range for suggestions)
+		tolerance = max(self.amount_tolerance_percent * 2, 20) / 100.0
+		min_amount = amount * (1 - tolerance)
+		max_amount = amount * (1 + tolerance)
+		
+		invoices = frappe.db.sql("""
+			SELECT 
+				si.name, si.customer, si.customer_name, si.grand_total,
+				si.outstanding_amount, si.posting_date, si.gestructureerde_mededeling,
+				c.custom_alias
+			FROM `tabSales Invoice` si
+			LEFT JOIN `tabCustomer` c ON si.customer = c.name
+			WHERE si.company = %s
+			AND si.docstatus = 1
+			AND si.status IN ('Unpaid', 'Partly Paid', 'Overdue')
+			ORDER BY si.posting_date DESC
+			LIMIT 50
+		""", (self.company,), as_dict=True)
 		
 		potential_matches = []
 		
@@ -291,37 +459,51 @@ class PaymentMatcher:
 			
 			# Amount matching
 			outstanding = flt(inv.outstanding_amount)
-			amount_diff = abs(amount - outstanding)
-			amount_diff_pct = (amount_diff / outstanding * 100) if outstanding else 100
-			
-			if amount_diff < 0.01:
-				score += 50
-				notes.append("Exact amount match")
-			elif amount_diff_pct <= 5:
-				score += 30
-				notes.append(f"Amount close (within 5%): diff = {amount_diff}")
-			elif amount_diff_pct <= 10:
-				score += 15
-				notes.append(f"Amount roughly close (within 10%)")
-			
-			# Customer name matching (fuzzy)
-			if counterpart and inv.customer_name:
-				counterpart_lower = counterpart.lower()
-				customer_lower = inv.customer_name.lower()
+			if outstanding > 0:
+				amount_diff = abs(amount - outstanding)
+				amount_diff_pct = (amount_diff / outstanding * 100)
 				
-				# Simple substring matching
-				if counterpart_lower in customer_lower or customer_lower in counterpart_lower:
-					score += 30
-					notes.append("Customer name match")
-				else:
-					# Check for partial word matches
-					counterpart_words = set(counterpart_lower.split())
-					customer_words = set(customer_lower.split())
-					common_words = counterpart_words.intersection(customer_words)
-					
-					if common_words:
-						score += 15
-						notes.append(f"Partial name match: {', '.join(common_words)}")
+				if amount_diff < 0.01:
+					score += 50
+					notes.append("Exact amount match")
+				elif amount_diff_pct <= 5:
+					score += 35
+					notes.append(f"Amount within 5%: diff = {amount_diff:.2f}")
+				elif amount_diff_pct <= 10:
+					score += 20
+					notes.append(f"Amount within 10%")
+				elif outstanding >= min_amount and outstanding <= max_amount:
+					score += 10
+					notes.append(f"Amount roughly similar")
+			
+			# Customer name matching
+			if counterpart:
+				best_name_score = 0
+				matched_name = ""
+				
+				# Check customer_name
+				name_score = fuzzy_match_score(counterpart, inv.customer_name)
+				if name_score > best_name_score:
+					best_name_score = name_score
+					matched_name = inv.customer_name
+				
+				# Check aliases
+				if inv.custom_alias:
+					for alias in [a.strip() for a in inv.custom_alias.split(",") if a.strip()]:
+						alias_score = fuzzy_match_score(counterpart, alias)
+						if alias_score > best_name_score:
+							best_name_score = alias_score
+							matched_name = alias
+				
+				if best_name_score >= 80:
+					score += 40
+					notes.append(f"Strong name match: '{matched_name}' ({best_name_score}%)")
+				elif best_name_score >= 50:
+					score += 20
+					notes.append(f"Partial name match: '{matched_name}' ({best_name_score}%)")
+				elif best_name_score >= 30:
+					score += 10
+					notes.append(f"Weak name match: '{matched_name}' ({best_name_score}%)")
 			
 			if score > 0:
 				potential_matches.append({
@@ -333,4 +515,3 @@ class PaymentMatcher:
 		# Sort by score and return top matches
 		potential_matches.sort(key=lambda x: x["score"], reverse=True)
 		return potential_matches[:max_results]
-

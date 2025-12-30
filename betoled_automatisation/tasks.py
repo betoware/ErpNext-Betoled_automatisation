@@ -121,8 +121,8 @@ def fetch_transactions_for_company(company):
 		transactions = api.get_new_transactions(account_id, days_back=days_to_fetch)
 		result["fetched"] = len(transactions)
 		
-		# Initialize matcher and processor
-		matcher = PaymentMatcher(company)
+		# Initialize matcher and processor with settings
+		matcher = PaymentMatcher(company, settings=settings)
 		processor = PaymentProcessor(company)
 		
 		# Process each transaction
