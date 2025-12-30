@@ -1,0 +1,182 @@
+{
+ "actions": [],
+ "autoname": "field:company",
+ "creation": "2024-12-30 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "enabled",
+  "column_break_1",
+  "last_sync",
+  "section_break_credentials",
+  "client_id",
+  "client_secret",
+  "column_break_credentials",
+  "access_token",
+  "token_expiry",
+  "section_break_account",
+  "ponto_organization_id",
+  "ponto_account_id",
+  "column_break_account",
+  "iban",
+  "section_break_settings",
+  "auto_reconcile_exact_matches",
+  "column_break_settings",
+  "days_to_fetch"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Sync",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_credentials",
+   "fieldtype": "Section Break",
+   "label": "Ponto API Credentials"
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "client_secret",
+   "fieldtype": "Password",
+   "label": "Client Secret",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_credentials",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "access_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Access Token",
+   "read_only": 1
+  },
+  {
+   "fieldname": "token_expiry",
+   "fieldtype": "Datetime",
+   "hidden": 1,
+   "label": "Token Expiry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_account",
+   "fieldtype": "Section Break",
+   "label": "Ponto Account Details"
+  },
+  {
+   "description": "Your Ponto Organization ID (UUID format)",
+   "fieldname": "ponto_organization_id",
+   "fieldtype": "Data",
+   "label": "Ponto Organization ID"
+  },
+  {
+   "description": "The Ponto Account ID (UUID) for the bank account. Leave empty to auto-detect from Company's Default Bank Account IBAN.",
+   "fieldname": "ponto_account_id",
+   "fieldtype": "Data",
+   "label": "Ponto Account ID"
+  },
+  {
+   "fieldname": "column_break_account",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "IBAN of the bank account (fetched from Company's Default Bank Account)",
+   "fieldname": "iban",
+   "fieldtype": "Data",
+   "label": "IBAN",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_settings",
+   "fieldtype": "Section Break",
+   "label": "Reconciliation Settings"
+  },
+  {
+   "default": "1",
+   "description": "Automatically create Payment Entries for exact matches (same amount, valid structured reference)",
+   "fieldname": "auto_reconcile_exact_matches",
+   "fieldtype": "Check",
+   "label": "Auto-reconcile Exact Matches"
+  },
+  {
+   "fieldname": "column_break_settings",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "7",
+   "description": "Number of days to look back when fetching transactions",
+   "fieldname": "days_to_fetch",
+   "fieldtype": "Int",
+   "label": "Days to Fetch"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-12-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Betoled Automatisation",
+ "name": "Ponto Settings",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "company",
+ "track_changes": 1
+}
+

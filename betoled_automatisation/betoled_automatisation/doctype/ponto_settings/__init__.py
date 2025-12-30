@@ -1,0 +1,2 @@
+# Ponto Settings DocType
+

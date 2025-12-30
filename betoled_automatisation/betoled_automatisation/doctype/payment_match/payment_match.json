@@ -1,0 +1,229 @@
+{
+ "actions": [],
+ "autoname": "format:MATCH-{####}",
+ "creation": "2024-12-30 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "ponto_transaction",
+  "company",
+  "status",
+  "column_break_1",
+  "created_date",
+  "processed_date",
+  "processed_by",
+  "section_break_invoice",
+  "sales_invoice",
+  "invoice_amount",
+  "outstanding_amount",
+  "column_break_invoice",
+  "gestructureerde_mededeling",
+  "section_break_payment",
+  "transaction_amount",
+  "transaction_date",
+  "counterpart_name",
+  "column_break_payment",
+  "match_type",
+  "confidence_score",
+  "section_break_result",
+  "payment_entry",
+  "column_break_result",
+  "notes"
+ ],
+ "fields": [
+  {
+   "fieldname": "ponto_transaction",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Ponto Transaction",
+   "options": "Ponto Transaction",
+   "reqd": 1
+  },
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "read_only": 1
+  },
+  {
+   "default": "Pending Review",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending Review\nApproved\nRejected\nAuto-Reconciled"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Now",
+   "fieldname": "created_date",
+   "fieldtype": "Datetime",
+   "label": "Created Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processed_date",
+   "fieldtype": "Datetime",
+   "label": "Processed Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "processed_by",
+   "fieldtype": "Link",
+   "label": "Processed By",
+   "options": "User",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_invoice",
+   "fieldtype": "Section Break",
+   "label": "Invoice Details"
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Sales Invoice",
+   "options": "Sales Invoice"
+  },
+  {
+   "fieldname": "invoice_amount",
+   "fieldtype": "Currency",
+   "label": "Invoice Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "outstanding_amount",
+   "fieldtype": "Currency",
+   "label": "Outstanding Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_invoice",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "gestructureerde_mededeling",
+   "fieldtype": "Data",
+   "label": "Gestructureerde Mededeling",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_payment",
+   "fieldtype": "Section Break",
+   "label": "Payment Details"
+  },
+  {
+   "fieldname": "transaction_amount",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Transaction Amount",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transaction_date",
+   "fieldtype": "Date",
+   "label": "Transaction Date",
+   "read_only": 1
+  },
+  {
+   "fieldname": "counterpart_name",
+   "fieldtype": "Data",
+   "label": "Counterpart Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_payment",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "match_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Match Type",
+   "options": "Exact Match\nPartial Payment\nOverpayment\nAmount Mismatch\nManual Match"
+  },
+  {
+   "description": "How confident we are in this match (0-100)",
+   "fieldname": "confidence_score",
+   "fieldtype": "Percent",
+   "label": "Confidence Score"
+  },
+  {
+   "fieldname": "section_break_result",
+   "fieldtype": "Section Break",
+   "label": "Result"
+  },
+  {
+   "fieldname": "payment_entry",
+   "fieldtype": "Link",
+   "label": "Payment Entry",
+   "options": "Payment Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_result",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Small Text",
+   "label": "Notes"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-12-30 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Betoled Automatisation",
+ "name": "Payment Match",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "created_date",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
+
