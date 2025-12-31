@@ -28,11 +28,11 @@ after_migrate = "betoled_automatisation.install.after_migrate"
 scheduler_events = {
 	"cron": {
 		# Run at 7:00 AM every day
-		"0 7 * * *": [
+		"0 5 * *": [
 			"betoled_automatisation.tasks.fetch_and_reconcile_all"
 		],
 		# Run at 2:00 PM (14:00) every day
-		"0 14 * * *": [
+		"0 12 * *": [
 			"betoled_automatisation.tasks.fetch_and_reconcile_all"
 		]
 	}
