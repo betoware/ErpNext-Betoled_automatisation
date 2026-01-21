@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "format:RECON-{YYYY}-{MM}-{DD}-{HH}-{mm}-{ss}",
+ "autoname": "format:RECON-{YYYY}-{MM}-{DD}-{HH}-{mm}-{ss}-{####}",
  "creation": "2024-12-31 10:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 1,

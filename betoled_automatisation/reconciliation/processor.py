@@ -56,6 +56,79 @@ class PaymentProcessor:
 		
 		frappe.throw("No Mode of Payment configured. Please create at least one.")
 	
+	def _get_bank_account(self, bank_account_name):
+		"""
+		Get Bank Account document by name, with fallback logic.
+		
+		Args:
+			bank_account_name: Bank account name from company settings (may include IBAN)
+			
+		Returns:
+			Bank Account document
+		"""
+		if not bank_account_name:
+			return None
+		
+		# First try: exact match
+		if frappe.db.exists("Bank Account", bank_account_name):
+			return frappe.get_doc("Bank Account", bank_account_name)
+		
+		# Second try: extract account name if format is "IBAN - Account Name"
+		# Pattern: "BE56 7370 4013 3488 - Zichtrekening KBC Lastamar - L"
+		if " - " in bank_account_name:
+			parts = bank_account_name.split(" - ", 1)
+			if len(parts) == 2:
+				# Try the part after " - " (the account name)
+				account_name = parts[1].strip()
+				if frappe.db.exists("Bank Account", account_name):
+					return frappe.get_doc("Bank Account", account_name)
+		
+		# Third try: search by IBAN if the bank_account_name contains an IBAN
+		# Extract potential IBAN (format: "BE56 7370 4013 3488" or "BE56737040133488")
+		import re
+		iban_pattern = r'\b([A-Z]{2}\d{2}[\s\d]{12,30})\b'
+		iban_match = re.search(iban_pattern, bank_account_name.upper())
+		
+		if iban_match:
+			potential_iban = iban_match.group(1).replace(" ", "").upper()
+			if len(potential_iban) >= 15:
+				# Search for bank account with matching IBAN
+				bank_accounts = frappe.get_all(
+					"Bank Account",
+					filters={"company": self.company},
+					fields=["name", "iban", "bank_account_no"]
+				)
+				
+				for ba in bank_accounts:
+					# Check IBAN field
+					if ba.get("iban"):
+						ba_iban = ba.iban.replace(" ", "").upper()
+						if ba_iban == potential_iban:
+							return frappe.get_doc("Bank Account", ba.name)
+					
+					# Check bank_account_no field as fallback
+					if ba.get("bank_account_no"):
+						ba_account_no = ba.bank_account_no.replace(" ", "").upper()
+						if ba_account_no == potential_iban:
+							return frappe.get_doc("Bank Account", ba.name)
+		
+		# Fourth try: partial name match (if account name contains the bank_account_name)
+		bank_accounts = frappe.get_all(
+			"Bank Account",
+			filters={"company": self.company},
+			fields=["name"]
+		)
+		
+		for ba in bank_accounts:
+			if bank_account_name in ba.name or ba.name in bank_account_name:
+				return frappe.get_doc("Bank Account", ba.name)
+		
+		# If all else fails, throw error
+		frappe.throw(
+			f"Bank Account '{bank_account_name}' not found for company {self.company}. "
+			f"Please check the Default Bank Account setting on the Company."
+		)
+	
 	def create_payment_entry(self, invoice, amount, transaction=None, reference=None):
 		"""
 		Create a Payment Entry for a Sales Invoice.
@@ -73,11 +146,11 @@ class PaymentProcessor:
 			invoice = frappe.get_doc("Sales Invoice", invoice)
 		
 		# Get bank account details
-		bank_account = self.default_bank_account
-		if not bank_account:
+		bank_account_name = self.default_bank_account
+		if not bank_account_name:
 			frappe.throw(f"No default bank account configured for company {self.company}")
 		
-		bank_account_doc = frappe.get_doc("Bank Account", bank_account)
+		bank_account_doc = self._get_bank_account(bank_account_name)
 		gl_account = bank_account_doc.account
 		
 		if not gl_account:

@@ -319,26 +319,47 @@ def _create_reconciliation_log(results):
 			total_no_match += result.get("no_match", 0)
 			total_errors += result.get("errors", 0)
 		
-		# Create log entry
-		log_doc = frappe.get_doc({
-			"doctype": "Reconciliation Log",
-			"run_date": now_datetime(),
-			"status": "Completed" if not results.get("errors") else "Completed with Errors",
-			"total_companies": total_companies,
-			"companies_processed": len(results.get("success", [])),
-			"companies_failed": len(results.get("errors", [])),
-			"transactions_fetched": total_fetched,
-			"transactions_new": total_new,
-			"transactions_matched": total_matched,
-			"transactions_auto_reconciled": total_auto_reconciled,
-			"transactions_pending_review": total_pending_review,
-			"transactions_no_match": total_no_match,
-			"errors_count": total_errors,
-			"details": json.dumps(results, indent=2, default=str)
-		})
+		# Create log entry with retry mechanism to handle potential duplicate entry errors
+		max_retries = 3
+		retry_count = 0
+		log_doc = None
 		
-		log_doc.insert(ignore_permissions=True)
-		frappe.db.commit()
+		while retry_count < max_retries:
+			try:
+				log_doc = frappe.get_doc({
+					"doctype": "Reconciliation Log",
+					"run_date": now_datetime(),
+					"status": "Completed" if not results.get("errors") else "Completed with Errors",
+					"total_companies": total_companies,
+					"companies_processed": len(results.get("success", [])),
+					"companies_failed": len(results.get("errors", [])),
+					"transactions_fetched": total_fetched,
+					"transactions_new": total_new,
+					"transactions_matched": total_matched,
+					"transactions_auto_reconciled": total_auto_reconciled,
+					"transactions_pending_review": total_pending_review,
+					"transactions_no_match": total_no_match,
+					"errors_count": total_errors,
+					"details": json.dumps(results, indent=2, default=str)
+				})
+				
+				log_doc.insert(ignore_permissions=True)
+				frappe.db.commit()
+				break  # Success, exit retry loop
+				
+			except frappe.exceptions.DuplicateEntryError:
+				retry_count += 1
+				if retry_count >= max_retries:
+					# Final retry failed, log error and re-raise
+					frappe.log_error(
+						title="Failed to create Reconciliation Log after retries",
+						message=f"Failed to create Reconciliation Log after {max_retries} retries due to duplicate entry errors. This should not happen with the updated autoname format."
+					)
+					raise
+				# Wait a small amount before retrying (allows autoname to generate new name)
+				import time
+				time.sleep(0.1)
+				frappe.db.rollback()  # Rollback the failed transaction
 		
 	except Exception as e:
 		# Don't fail the reconciliation if log creation fails
