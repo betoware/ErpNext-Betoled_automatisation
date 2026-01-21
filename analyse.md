@@ -234,6 +234,30 @@ Deze worden opgeslagen als **Payment Match** records voor handmatige goedkeuring
 | processed_date | Datetime | Wanneer verwerkt |
 | notes | Small Text | Opmerkingen |
 
+### 4.4 Reconciliation Log
+**Doel:** Log van elke reconciliatie run (scheduled of manueel)
+
+| Veld | Type | Beschrijving |
+|------|------|--------------|
+| run_date | Datetime | Wanneer de run is uitgevoerd |
+| status | Select | Completed/Completed with Errors/Failed |
+| total_companies | Int | Totaal aantal companies |
+| companies_processed | Int | Aantal succesvol verwerkte companies |
+| companies_failed | Int | Aantal companies met errors |
+| transactions_fetched | Int | Totaal aantal opgehaalde transacties |
+| transactions_new | Int | Aantal nieuwe transacties |
+| transactions_matched | Int | Aantal gematchte transacties |
+| transactions_auto_reconciled | Int | Aantal automatisch gereconcilieerde transacties |
+| transactions_pending_review | Int | Aantal transacties die review nodig hebben |
+| transactions_no_match | Int | Aantal transacties zonder match |
+| errors_count | Int | Totaal aantal errors |
+| details | Code (JSON) | Volledige details van de run |
+
+**Automatisch aangemaakt bij:**
+- Elke scheduled run (07:00 en 14:00)
+- Elke manuele run via `run_reconciliation_now()`
+- Elke manuele run via `run_reconciliation_for_company()`
+
 ---
 
 ## 5. Custom Fields
@@ -275,8 +299,31 @@ Deze worden opgeslagen als **Payment Match** records voor handmatige goedkeuring
 | `get_unmatched_transactions(company, limit)` | Transacties zonder match |
 | `manually_match_transaction(transaction_name, invoice_name)` | Handmatige koppeling |
 | `find_potential_matches(transaction_name)` | Suggesties voor matching |
-| `run_reconciliation_now()` | Start reconciliatie job |
-| `run_reconciliation_for_company(company)` | Reconciliatie per company |
+| `run_reconciliation_now(background=True)` | Start reconciliatie job (background of direct) |
+| `run_reconciliation_for_company(company)` | Reconciliatie per company (direct) |
+
+### 7.2 Manuele Triggers
+
+Reconciliatie kan op twee manieren manueel worden getriggerd:
+
+1. **Via Ponto Dashboard** (`/app/ponto-dashboard`):
+   - **"Fetch All Transactions"** - Start reconciliatie voor alle enabled companies (via background queue)
+   - **"Fetch for Specific Company"** - Start reconciliatie voor één specifieke company (direct)
+   - **"Fetch Now"** per company - Start reconciliatie voor die company (direct)
+
+2. **Via API/Console**:
+   ```python
+   # Alle companies (background)
+   frappe.call("betoled_automatisation.tasks.run_reconciliation_now")
+   
+   # Alle companies (direct, voor snellere feedback)
+   frappe.call("betoled_automatisation.tasks.run_reconciliation_now", {"background": False})
+   
+   # Specifieke company (direct)
+   frappe.call("betoled_automatisation.tasks.run_reconciliation_for_company", {"company": "BETOWARE"})
+   ```
+
+**Belangrijk:** Alle manuele runs maken automatisch een Reconciliation Log entry aan, net zoals de scheduled runs.
 
 ---
 

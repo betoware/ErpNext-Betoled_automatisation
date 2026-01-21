@@ -1,0 +1,194 @@
+{
+ "actions": [],
+ "autoname": "format:RECON-{YYYY}-{MM}-{DD}-{HH}-{mm}-{ss}",
+ "creation": "2024-12-31 10:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "run_date",
+  "status",
+  "column_break_1",
+  "total_companies",
+  "companies_processed",
+  "companies_failed",
+  "section_break_transactions",
+  "transactions_fetched",
+  "transactions_new",
+  "column_break_transactions",
+  "transactions_matched",
+  "transactions_auto_reconciled",
+  "section_break_results",
+  "transactions_pending_review",
+  "transactions_no_match",
+  "column_break_results",
+  "errors_count",
+  "section_break_details",
+  "details"
+ ],
+ "fields": [
+  {
+   "fieldname": "run_date",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Run Date",
+   "reqd": 1
+  },
+  {
+   "default": "Completed",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Completed\nCompleted with Errors\nFailed"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "total_companies",
+   "fieldtype": "Int",
+   "label": "Total Companies",
+   "read_only": 1
+  },
+  {
+   "fieldname": "companies_processed",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Companies Processed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "companies_failed",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Companies Failed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_transactions",
+   "fieldtype": "Section Break",
+   "label": "Transactions"
+  },
+  {
+   "fieldname": "transactions_fetched",
+   "fieldtype": "Int",
+   "label": "Transactions Fetched",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transactions_new",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "New Transactions",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_transactions",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "transactions_matched",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Transactions Matched",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transactions_auto_reconciled",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Auto-Reconciled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_results",
+   "fieldtype": "Section Break",
+   "label": "Results"
+  },
+  {
+   "fieldname": "transactions_pending_review",
+   "fieldtype": "Int",
+   "label": "Pending Review",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transactions_no_match",
+   "fieldtype": "Int",
+   "label": "No Match",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_results",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "errors_count",
+   "fieldtype": "Int",
+   "label": "Errors Count",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_details",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "details",
+   "fieldtype": "Code",
+   "label": "Details",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2024-12-31 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Betoled Automatisation",
+ "name": "Reconciliation Log",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts User",
+   "share": 1
+  }
+ ],
+ "sort_field": "run_date",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -62,6 +62,9 @@ def fetch_and_reconcile_all():
 	
 	frappe.logger().info(f"Ponto reconciliation completed. Results: {json.dumps(results)}")
 	
+	# Create Reconciliation Log entry
+	_create_reconciliation_log(results)
+	
 	return results
 
 
@@ -288,28 +291,117 @@ def _create_payment_match(transaction, match_result):
 	return match_doc
 
 
+def _create_reconciliation_log(results):
+	"""
+	Create a Reconciliation Log entry for each run.
+	
+	Args:
+		results: Dictionary with success and errors lists
+	"""
+	try:
+		# Calculate summary statistics
+		total_companies = len(results.get("success", [])) + len(results.get("errors", []))
+		total_fetched = 0
+		total_new = 0
+		total_matched = 0
+		total_auto_reconciled = 0
+		total_pending_review = 0
+		total_no_match = 0
+		total_errors = 0
+		
+		for success_item in results.get("success", []):
+			result = success_item.get("result", {})
+			total_fetched += result.get("fetched", 0)
+			total_new += result.get("new", 0)
+			total_matched += result.get("matched", 0)
+			total_auto_reconciled += result.get("auto_reconciled", 0)
+			total_pending_review += result.get("pending_review", 0)
+			total_no_match += result.get("no_match", 0)
+			total_errors += result.get("errors", 0)
+		
+		# Create log entry
+		log_doc = frappe.get_doc({
+			"doctype": "Reconciliation Log",
+			"run_date": now_datetime(),
+			"status": "Completed" if not results.get("errors") else "Completed with Errors",
+			"total_companies": total_companies,
+			"companies_processed": len(results.get("success", [])),
+			"companies_failed": len(results.get("errors", [])),
+			"transactions_fetched": total_fetched,
+			"transactions_new": total_new,
+			"transactions_matched": total_matched,
+			"transactions_auto_reconciled": total_auto_reconciled,
+			"transactions_pending_review": total_pending_review,
+			"transactions_no_match": total_no_match,
+			"errors_count": total_errors,
+			"details": json.dumps(results, indent=2, default=str)
+		})
+		
+		log_doc.insert(ignore_permissions=True)
+		frappe.db.commit()
+		
+	except Exception as e:
+		# Don't fail the reconciliation if log creation fails
+		frappe.log_error(
+			title="Failed to create Reconciliation Log",
+			message=f"Error creating reconciliation log: {str(e)}\n\n{frappe.get_traceback()}"
+		)
+
+
 # Convenience functions for manual execution
 
 @frappe.whitelist()
-def run_reconciliation_now():
+def run_reconciliation_now(background=True):
 	"""
 	Manually trigger reconciliation for all companies.
 	Can be called from the desk or console.
+	
+	Args:
+		background: If True, run in background queue. If False, run synchronously.
 	"""
 	frappe.only_for("System Manager")
 	
-	frappe.enqueue(
-		fetch_and_reconcile_all,
-		queue="long",
-		timeout=1800,  # 30 minutes
-		job_name="ponto_reconciliation_manual"
-	)
-	
-	frappe.msgprint(
-		"Payment reconciliation job has been queued. Check the background jobs for status.",
-		title="Reconciliation Started",
-		indicator="green"
-	)
+	if background:
+		# Run in background queue (default behavior)
+		frappe.enqueue(
+			fetch_and_reconcile_all,
+			queue="long",
+			timeout=1800,  # 30 minutes
+			job_name="ponto_reconciliation_manual"
+		)
+		
+		frappe.msgprint(
+			"Payment reconciliation job has been queued. Check the background jobs for status.",
+			title="Reconciliation Started",
+			indicator="green"
+		)
+	else:
+		# Run synchronously (for immediate feedback)
+		try:
+			results = fetch_and_reconcile_all()
+			
+			# Show summary
+			total_companies = len(results.get("success", [])) + len(results.get("errors", []))
+			success_count = len(results.get("success", []))
+			error_count = len(results.get("errors", []))
+			
+			message = f"Reconciliation completed for {success_count} company/companies"
+			if error_count > 0:
+				message += f" with {error_count} error(s)"
+			
+			frappe.msgprint(
+				message,
+				title="Reconciliation Complete",
+				indicator="green" if error_count == 0 else "orange"
+			)
+			
+			return results
+		except Exception as e:
+			frappe.log_error(
+				title="Manual Reconciliation Error",
+				message=f"Error during manual reconciliation:\n{str(e)}\n\n{frappe.get_traceback()}"
+			)
+			frappe.throw(f"Reconciliation failed: {str(e)}")
 
 
 @frappe.whitelist()
@@ -319,10 +411,38 @@ def run_reconciliation_for_company(company):
 	
 	Args:
 		company: Company name
+		
+	Returns:
+		dict: Result summary
 	"""
 	frappe.only_for(["System Manager", "Accounts Manager"])
 	
-	result = fetch_transactions_for_company(company)
-	
-	return result
+	try:
+		result = fetch_transactions_for_company(company)
+		
+		# Create Reconciliation Log entry for this single company run
+		results = {
+			"success": [{
+				"company": company,
+				"result": result
+			}],
+			"errors": []
+		}
+		_create_reconciliation_log(results)
+		
+		return result
+	except Exception as e:
+		# Create log entry even if there's an error
+		error_msg = str(e)
+		results = {
+			"success": [],
+			"errors": [{
+				"company": company,
+				"error": error_msg
+			}]
+		}
+		_create_reconciliation_log(results)
+		
+		# Re-raise the exception so the UI can show the error
+		raise
 
