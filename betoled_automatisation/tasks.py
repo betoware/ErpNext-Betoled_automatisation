@@ -143,8 +143,9 @@ def fetch_transactions_for_company(company):
 				# Create Ponto Transaction record
 				ponto_txn = _create_ponto_transaction(txn_data, company)
 				
-				# Only process credit transactions (incoming payments)
-				if ponto_txn.credit_debit != "Credit":
+				# Process both Credit (incoming) and Debit (outgoing) transactions
+				# Credit -> Sales Invoices, Debit -> Purchase Orders
+				if ponto_txn.credit_debit not in ["Credit", "Debit"]:
 					continue
 				
 				# Try to match
@@ -160,14 +161,24 @@ def fetch_transactions_for_company(company):
 				elif match_result.is_exact() and settings.auto_reconcile_exact_matches:
 					# Auto-reconcile exact matches
 					try:
-						payment_entry = processor.create_payment_entry(
-							invoice=match_result.invoice,
-							amount=ponto_txn.amount,
-							transaction=ponto_txn
-						)
+						if match_result.invoice:
+							# Credit transaction -> Sales Invoice
+							payment_entry = processor.create_payment_entry(
+								invoice=match_result.invoice,
+								amount=ponto_txn.amount,
+								transaction=ponto_txn
+							)
+							ponto_txn.matched_invoice = match_result.invoice.name
+						elif match_result.purchase_order:
+							# Debit transaction -> Purchase Order
+							payment_entry = processor.create_payment_entry_for_po(
+								purchase_order=match_result.purchase_order,
+								amount=ponto_txn.amount,
+								transaction=ponto_txn
+							)
+							ponto_txn.matched_purchase_order = match_result.purchase_order.name
 						
 						ponto_txn.status = "Reconciled"
-						ponto_txn.matched_invoice = match_result.invoice.name
 						ponto_txn.payment_entry = payment_entry.name
 						ponto_txn.match_status = "Exact Match"
 						ponto_txn.match_notes = "\n".join(match_result.notes)
@@ -189,6 +200,7 @@ def fetch_transactions_for_company(company):
 					
 					ponto_txn.status = "Matched"
 					ponto_txn.matched_invoice = match_result.invoice.name if match_result.invoice else None
+					ponto_txn.matched_purchase_order = match_result.purchase_order.name if match_result.purchase_order else None
 					ponto_txn.match_status = match_result.match_type
 					ponto_txn.match_notes = "\n".join(match_result.notes)
 					ponto_txn.save()
@@ -281,6 +293,7 @@ def _create_payment_match(transaction, match_result):
 		"company": transaction.company,
 		"status": "Pending Review",
 		"sales_invoice": match_result.invoice.name if match_result.invoice else None,
+		"purchase_order": match_result.purchase_order.name if match_result.purchase_order else None,
 		"match_type": match_result.match_type,
 		"confidence_score": match_result.confidence,
 		"notes": "\n".join(match_result.notes) if match_result.notes else None

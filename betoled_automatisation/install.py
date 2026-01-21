@@ -69,7 +69,7 @@ def _setup_custom_fields():
 		# Module might already exist or be created by the framework
 		pass
 	
-	# Create custom_alias field on Customer for fuzzy matching
+	# Create custom_alias field on Customer and Supplier for fuzzy matching
 	custom_fields = {
 		"Customer": [
 			{
@@ -79,17 +79,35 @@ def _setup_custom_fields():
 				"insert_after": "customer_name",
 				"description": "Comma-separated list of alternative names this customer might use for bank payments (for fuzzy matching)"
 			}
+		],
+		"Supplier": [
+			{
+				"fieldname": "custom_alias",
+				"label": "Payment Aliases",
+				"fieldtype": "Small Text",
+				"insert_after": "supplier_name",
+				"description": "Comma-separated list of alternative names this supplier might use for bank payments (for fuzzy matching)"
+			}
 		]
 	}
 	
-	# Check if field already exists
+	# Check and create Customer custom_alias field
 	if not frappe.db.exists("Custom Field", {"dt": "Customer", "fieldname": "custom_alias"}):
 		try:
-			create_custom_fields(custom_fields, update=True)
+			create_custom_fields({"Customer": custom_fields["Customer"]}, update=True)
 			print("  Created custom_alias field on Customer")
 			frappe.db.commit()
 		except Exception as e:
-			print(f"  Could not create custom_alias field: {e}")
+			print(f"  Could not create custom_alias field on Customer: {e}")
+	
+	# Check and create Supplier custom_alias field
+	if not frappe.db.exists("Custom Field", {"dt": "Supplier", "fieldname": "custom_alias"}):
+		try:
+			create_custom_fields({"Supplier": custom_fields["Supplier"]}, update=True)
+			print("  Created custom_alias field on Supplier")
+			frappe.db.commit()
+		except Exception as e:
+			print(f"  Could not create custom_alias field on Supplier: {e}")
 
 
 def _create_default_settings():

@@ -25,6 +25,7 @@
   "structured_reference",
   "section_break_matching",
   "matched_invoice",
+  "matched_purchase_order",
   "payment_entry",
   "column_break_matching",
   "match_status",
@@ -143,6 +144,12 @@
    "fieldtype": "Link",
    "label": "Matched Invoice",
    "options": "Sales Invoice"
+  },
+  {
+   "fieldname": "matched_purchase_order",
+   "fieldtype": "Link",
+   "label": "Matched Purchase Order",
+   "options": "Purchase Order"
   },
   {
    "fieldname": "payment_entry",

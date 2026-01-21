@@ -15,6 +15,7 @@
   "processed_by",
   "section_break_invoice",
   "sales_invoice",
+  "purchase_order",
   "invoice_amount",
   "outstanding_amount",
   "column_break_invoice",
@@ -92,6 +93,13 @@
    "in_list_view": 1,
    "label": "Sales Invoice",
    "options": "Sales Invoice"
+  },
+  {
+   "fieldname": "purchase_order",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Purchase Order",
+   "options": "Purchase Order"
   },
   {
    "fieldname": "invoice_amount",

@@ -24,9 +24,10 @@ class MatchResult:
 	AMOUNT_MISMATCH = "Amount Mismatch"
 	FUZZY_MATCH = "Fuzzy Match"
 	
-	def __init__(self, match_type, invoice=None, confidence=0, notes=None, phase=1):
+	def __init__(self, match_type, invoice=None, purchase_order=None, confidence=0, notes=None, phase=1):
 		self.match_type = match_type
 		self.invoice = invoice
+		self.purchase_order = purchase_order
 		self.confidence = confidence
 		self.notes = notes or []
 		self.phase = phase  # 1 = structured ref, 2 = fuzzy
@@ -161,7 +162,7 @@ class PaymentMatcher:
 	
 	def match_transaction(self, transaction):
 		"""
-		Try to match a Ponto Transaction to a Sales Invoice.
+		Try to match a Ponto Transaction to a Sales Invoice (Credit) or Purchase Order (Debit).
 		
 		Args:
 			transaction: Ponto Transaction document or dict
@@ -169,32 +170,43 @@ class PaymentMatcher:
 		Returns:
 			MatchResult: Result of the matching attempt
 		"""
-		# Only process credit transactions (incoming payments)
-		if transaction.get("credit_debit") != "Credit":
-			return MatchResult(
-				MatchResult.NO_MATCH,
-				notes=["Not a credit transaction (incoming payment)"]
-			)
-		
+		credit_debit = transaction.get("credit_debit")
 		structured_ref = transaction.get("structured_reference")
 		amount = flt(transaction.get("amount"))
 		counterpart_name = transaction.get("counterpart_name", "")
 		
-		# ============ PHASE 1: Structured Reference Matching ============
-		if structured_ref:
-			result = self._match_by_structured_reference(structured_ref, amount)
-			if result.match_type != MatchResult.NO_MATCH:
-				result.phase = 1
-				result.notes.insert(0, "Phase 1: Matched by structured reference")
-				return result
+		# Process Credit transactions (incoming payments) -> match to Sales Invoices
+		if credit_debit == "Credit":
+			# ============ PHASE 1: Structured Reference Matching ============
+			if structured_ref:
+				result = self._match_by_structured_reference(structured_ref, amount)
+				if result.match_type != MatchResult.NO_MATCH:
+					result.phase = 1
+					result.notes.insert(0, "Phase 1: Matched by structured reference")
+					return result
+			
+			# ============ PHASE 2: Fuzzy Matching (Amount + Name) ============
+			if self.enable_fuzzy_matching and counterpart_name:
+				result = self._match_by_fuzzy(amount, counterpart_name)
+				if result.match_type != MatchResult.NO_MATCH:
+					result.phase = 2
+					result.notes.insert(0, "Phase 2: Matched by amount + customer name")
+					return result
 		
-		# ============ PHASE 2: Fuzzy Matching (Amount + Name) ============
-		if self.enable_fuzzy_matching and counterpart_name:
-			result = self._match_by_fuzzy(amount, counterpart_name)
-			if result.match_type != MatchResult.NO_MATCH:
-				result.phase = 2
-				result.notes.insert(0, "Phase 2: Matched by amount + customer name")
-				return result
+		# Process Debit transactions (outgoing payments) -> match to Purchase Orders
+		elif credit_debit == "Debit":
+			# ============ PHASE 1: Fuzzy Matching (Amount + Supplier Name) ============
+			if self.enable_fuzzy_matching and counterpart_name:
+				result = self._match_purchase_order_by_fuzzy(amount, counterpart_name)
+				if result.match_type != MatchResult.NO_MATCH:
+					result.phase = 1
+					result.notes.insert(0, "Phase 1: Matched by amount + supplier name")
+					return result
+		else:
+			return MatchResult(
+				MatchResult.NO_MATCH,
+				notes=[f"Unknown transaction type: {credit_debit}"]
+			)
 		
 		# No match found
 		return MatchResult(
@@ -202,7 +214,8 @@ class PaymentMatcher:
 			notes=[
 				f"No match found for payment of {amount}",
 				f"Counterpart: {counterpart_name}",
-				f"Structured ref: {structured_ref or 'None'}"
+				f"Structured ref: {structured_ref or 'None'}",
+				f"Type: {credit_debit}"
 			]
 		)
 	
@@ -412,6 +425,141 @@ class PaymentMatcher:
 				f"Fuzzy match: '{counterpart_name}' → '{best['matched_name']}' (score: {best['name_score']}%)",
 				f"Amount: {amount}, Outstanding: {outstanding} (diff: {best['amount_diff_pct']:.1f}%)",
 				f"Customer: {inv.customer_name}"
+			]
+		)
+	
+	def _match_purchase_order_by_fuzzy(self, amount, counterpart_name):
+		"""
+		Match outgoing payment (Debit) by amount (within tolerance) and fuzzy supplier name.
+		Matches to Purchase Orders.
+		
+		Args:
+			amount: Transaction amount
+			counterpart_name: Name from the bank transaction
+			
+		Returns:
+			MatchResult
+		"""
+		# Calculate amount range
+		tolerance = self.amount_tolerance_percent / 100.0
+		min_amount = amount * (1 - tolerance)
+		max_amount = amount * (1 + tolerance)
+		
+		# Find unpaid Purchase Orders within amount range
+		# Note: Purchase Orders don't have outstanding_amount, so we use grand_total
+		# and check if there are unpaid Purchase Invoices linked to the PO
+		purchase_orders = frappe.db.sql("""
+			SELECT 
+				po.name, po.grand_total, po.supplier, po.supplier_name,
+				po.status, po.transaction_date, po.company,
+				s.custom_alias,
+				COALESCE(
+					(SELECT SUM(pi.grand_total - pi.outstanding_amount)
+					 FROM `tabPurchase Invoice` pi
+					 WHERE pi.po_no = po.name
+					 AND pi.docstatus = 1),
+					0
+				) as paid_amount
+			FROM `tabPurchase Order` po
+			LEFT JOIN `tabSupplier` s ON po.supplier = s.name
+			WHERE po.company = %s
+			AND po.docstatus = 1
+			AND po.status IN ('To Receive', 'To Receive and Bill', 'To Bill', 'Completed')
+			AND po.grand_total BETWEEN %s AND %s
+		""", (self.company, min_amount, max_amount), as_dict=True)
+		
+		if not purchase_orders:
+			return MatchResult(
+				MatchResult.NO_MATCH,
+				notes=[f"No Purchase Orders found within {self.amount_tolerance_percent}% of {amount}"]
+			)
+		
+		# Score each Purchase Order based on name matching
+		matches = []
+		
+		for po in purchase_orders:
+			best_score = 0
+			matched_name = ""
+			
+			# Check supplier_name
+			score = fuzzy_match_score(counterpart_name, po.supplier_name or "")
+			if score > best_score:
+				best_score = score
+				matched_name = po.supplier_name or ""
+			
+			# Check custom_alias (comma-separated list)
+			if po.custom_alias:
+				aliases = [a.strip() for a in po.custom_alias.split(",") if a.strip()]
+				for alias in aliases:
+					score = fuzzy_match_score(counterpart_name, alias)
+					if score > best_score:
+						best_score = score
+						matched_name = alias
+			
+			if best_score >= self.fuzzy_match_threshold:
+				# Calculate outstanding amount (grand_total - paid_amount)
+				outstanding = flt(po.grand_total) - flt(po.paid_amount or 0)
+				
+				# Calculate amount difference for confidence adjustment
+				amount_diff_pct = abs(amount - outstanding) / outstanding * 100 if outstanding else 100
+				
+				# Adjust confidence based on name score and amount match
+				confidence = int((best_score * 0.7) + ((100 - amount_diff_pct) * 0.3))
+				
+				matches.append({
+					"purchase_order": po,
+					"name_score": best_score,
+					"matched_name": matched_name,
+					"amount_diff_pct": amount_diff_pct,
+					"outstanding": outstanding,
+					"confidence": confidence
+				})
+		
+		if not matches:
+			return MatchResult(
+				MatchResult.NO_MATCH,
+				notes=[
+					f"No matching supplier found for '{counterpart_name}'",
+					f"Threshold: {self.fuzzy_match_threshold}%"
+				]
+			)
+		
+		# Sort by confidence
+		matches.sort(key=lambda x: x["confidence"], reverse=True)
+		
+		if len(matches) > 1 and matches[0]["confidence"] - matches[1]["confidence"] < 10:
+			# Multiple close matches - needs review
+			return MatchResult(
+				MatchResult.MULTIPLE_MATCHES,
+				purchase_order=matches[0]["purchase_order"],
+				confidence=matches[0]["confidence"],
+				notes=[
+					f"Multiple potential matches found:",
+					*[f"  - {m['purchase_order'].name}: {m['purchase_order'].supplier_name} (score: {m['name_score']}%, amount diff: {m['amount_diff_pct']:.1f}%)" 
+					  for m in matches[:3]]
+				]
+			)
+		
+		best = matches[0]
+		po = best["purchase_order"]
+		outstanding = best["outstanding"]
+		
+		# Determine match type based on amount
+		if abs(amount - outstanding) < 0.01:
+			match_type = MatchResult.FUZZY_MATCH
+		elif amount < outstanding:
+			match_type = MatchResult.PARTIAL_PAYMENT
+		else:
+			match_type = MatchResult.OVERPAYMENT
+		
+		return MatchResult(
+			match_type,
+			purchase_order=po,
+			confidence=best["confidence"],
+			notes=[
+				f"Fuzzy match: '{counterpart_name}' → '{best['matched_name']}' (score: {best['name_score']}%)",
+				f"Amount: {amount}, Outstanding: {outstanding} (diff: {best['amount_diff_pct']:.1f}%)",
+				f"Supplier: {po.supplier_name}"
 			]
 		)
 	

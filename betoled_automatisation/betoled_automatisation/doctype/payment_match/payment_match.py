@@ -3,13 +3,17 @@
 
 import frappe
 from frappe.model.document import Document
+from frappe.utils import flt
 
 
 class PaymentMatch(Document):
 	def validate(self):
-		"""Fetch invoice details when invoice is linked"""
+		"""Fetch invoice/PO details when linked"""
 		if self.sales_invoice:
 			self.fetch_invoice_details()
+		
+		if self.purchase_order:
+			self.fetch_purchase_order_details()
 		
 		if self.ponto_transaction:
 			self.fetch_transaction_details()
@@ -21,6 +25,20 @@ class PaymentMatch(Document):
 		self.outstanding_amount = invoice.outstanding_amount
 		self.gestructureerde_mededeling = invoice.get("gestructureerde_mededeling")
 		self.company = invoice.company
+	
+	def fetch_purchase_order_details(self):
+		"""Fetch details from the linked Purchase Order"""
+		po = frappe.get_doc("Purchase Order", self.purchase_order)
+		self.invoice_amount = po.grand_total
+		# Calculate outstanding: grand_total - sum of paid amounts from Purchase Invoices
+		paid_result = frappe.db.sql("""
+			SELECT SUM(pi.grand_total - pi.outstanding_amount) as paid
+			FROM `tabPurchase Invoice` pi
+			WHERE pi.po_no = %s AND pi.docstatus = 1
+		""", (po.name,), as_dict=True)
+		paid_amount = flt(paid_result[0].get("paid") or 0) if paid_result else 0
+		self.outstanding_amount = po.grand_total - paid_amount
+		self.company = po.company
 	
 	def fetch_transaction_details(self):
 		"""Fetch details from the linked Ponto Transaction"""
@@ -38,8 +56,8 @@ class PaymentMatch(Document):
 		if self.status not in ["Pending Review"]:
 			frappe.throw(f"Cannot approve match with status {self.status}")
 		
-		if not self.sales_invoice:
-			frappe.throw("No Sales Invoice linked to this match")
+		if not self.sales_invoice and not self.purchase_order:
+			frappe.throw("No Sales Invoice or Purchase Order linked to this match")
 		
 		from betoled_automatisation.reconciliation.processor import create_payment_entry_from_match
 		
@@ -54,11 +72,16 @@ class PaymentMatch(Document):
 			
 			# Update the Ponto Transaction status
 			if self.ponto_transaction:
-				frappe.db.set_value("Ponto Transaction", self.ponto_transaction, {
+				update_fields = {
 					"status": "Reconciled",
-					"matched_invoice": self.sales_invoice,
 					"payment_entry": payment_entry.name
-				})
+				}
+				if self.sales_invoice:
+					update_fields["matched_invoice"] = self.sales_invoice
+				if self.purchase_order:
+					update_fields["matched_purchase_order"] = self.purchase_order
+				
+				frappe.db.set_value("Ponto Transaction", self.ponto_transaction, update_fields)
 			
 			frappe.msgprint(
 				f"Payment Entry {payment_entry.name} created successfully.",
