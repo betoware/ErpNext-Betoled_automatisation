@@ -69,6 +69,19 @@ class PaymentProcessor:
 		if not bank_account_name:
 			return None
 		
+		# Get all bank accounts for this company to work with
+		all_bank_accounts = frappe.get_all(
+			"Bank Account",
+			filters={"company": self.company},
+			fields=["name", "iban", "bank_account_no"]
+		)
+		
+		if not all_bank_accounts:
+			frappe.throw(
+				f"No Bank Accounts found for company {self.company}. "
+				f"Please create at least one Bank Account for this company."
+			)
+		
 		# First try: exact match
 		if frappe.db.exists("Bank Account", bank_account_name):
 			return frappe.get_doc("Bank Account", bank_account_name)
@@ -82,6 +95,35 @@ class PaymentProcessor:
 				account_name = parts[1].strip()
 				if frappe.db.exists("Bank Account", account_name):
 					return frappe.get_doc("Bank Account", account_name)
+				
+				# Also try without the last part (e.g., "Zichtrekening KBC BETOWARE - B" -> "Zichtrekening KBC BETOWARE")
+				if " - " in account_name:
+					account_name_parts = account_name.rsplit(" - ", 1)
+					if len(account_name_parts) == 2:
+						account_name_base = account_name_parts[0].strip()
+						# Try exact match with base name
+						if frappe.db.exists("Bank Account", account_name_base):
+							return frappe.get_doc("Bank Account", account_name_base)
+						
+						# Try matching with all bank accounts (case-insensitive)
+						account_name_base_lower = account_name_base.lower()
+						for ba in all_bank_accounts:
+							ba_name_lower = ba.name.lower()
+							# Exact match (case-insensitive)
+							if ba_name_lower == account_name_base_lower:
+								return frappe.get_doc("Bank Account", ba.name)
+							# Contains match
+							if account_name_base_lower in ba_name_lower or ba_name_lower in account_name_base_lower:
+								return frappe.get_doc("Bank Account", ba.name)
+				
+				# Also try matching the full account_name (after " - ") with all bank accounts
+				account_name_lower = account_name.lower()
+				for ba in all_bank_accounts:
+					ba_name_lower = ba.name.lower()
+					if ba_name_lower == account_name_lower:
+						return frappe.get_doc("Bank Account", ba.name)
+					if account_name_lower in ba_name_lower or ba_name_lower in account_name_lower:
+						return frappe.get_doc("Bank Account", ba.name)
 		
 		# Third try: search by IBAN if the bank_account_name contains an IBAN
 		# Extract potential IBAN (format: "BE56 7370 4013 3488" or "BE56737040133488")
@@ -93,13 +135,7 @@ class PaymentProcessor:
 			potential_iban = iban_match.group(1).replace(" ", "").upper()
 			if len(potential_iban) >= 15:
 				# Search for bank account with matching IBAN
-				bank_accounts = frappe.get_all(
-					"Bank Account",
-					filters={"company": self.company},
-					fields=["name", "iban", "bank_account_no"]
-				)
-				
-				for ba in bank_accounts:
+				for ba in all_bank_accounts:
 					# Check IBAN field
 					if ba.get("iban"):
 						ba_iban = ba.iban.replace(" ", "").upper()
@@ -112,20 +148,59 @@ class PaymentProcessor:
 						if ba_account_no == potential_iban:
 							return frappe.get_doc("Bank Account", ba.name)
 		
-		# Fourth try: partial name match (if account name contains the bank_account_name)
-		bank_accounts = frappe.get_all(
-			"Bank Account",
-			filters={"company": self.company},
-			fields=["name"]
-		)
+		# Fourth try: fuzzy name matching - extract key words from account name
+		# Remove IBAN and common separators, then match on key words
+		search_terms = bank_account_name.upper()
+		# Remove IBAN pattern
+		search_terms = re.sub(iban_pattern, "", search_terms)
+		# Remove common separators and clean up
+		search_terms = re.sub(r'[-–—]', ' ', search_terms)
+		search_terms = ' '.join([t for t in search_terms.split() if len(t) > 2])  # Keep only meaningful words
 		
-		for ba in bank_accounts:
-			if bank_account_name in ba.name or ba.name in bank_account_name:
+		best_match = None
+		best_score = 0
+		
+		for ba in all_bank_accounts:
+			ba_name_upper = ba.name.upper()
+			# Count matching words
+			score = 0
+			for term in search_terms.split():
+				if term in ba_name_upper:
+					score += len(term)
+			
+			# Also check reverse (if bank account name words are in search terms)
+			ba_words = [w for w in ba_name_upper.split() if len(w) > 2]
+			for word in ba_words:
+				if word in search_terms:
+					score += len(word)
+			
+			if score > best_score:
+				best_score = score
+				best_match = ba.name
+		
+		# If we found a reasonable match (at least 5 characters matched), use it
+		if best_match and best_score >= 5:
+			return frappe.get_doc("Bank Account", best_match)
+		
+		# Fifth try: simple partial match as last resort
+		for ba in all_bank_accounts:
+			# Check if any significant part of the name matches
+			ba_name_lower = ba.name.lower()
+			search_lower = bank_account_name.lower()
+			
+			# Extract meaningful words (length > 3) from both
+			ba_words = [w for w in ba_name_lower.split() if len(w) > 3]
+			search_words = [w for w in search_lower.split() if len(w) > 3 and not re.match(r'^[a-z]{2}\d+', w)]  # Exclude IBAN-like patterns
+			
+			# If we have at least one matching word, consider it
+			if any(word in ba_name_lower for word in search_words) or any(word in search_lower for word in ba_words):
 				return frappe.get_doc("Bank Account", ba.name)
 		
-		# If all else fails, throw error
+		# If all else fails, provide helpful error with available bank accounts
+		available_accounts = [ba.name for ba in all_bank_accounts]
 		frappe.throw(
 			f"Bank Account '{bank_account_name}' not found for company {self.company}. "
+			f"Available Bank Accounts: {', '.join(available_accounts)}. "
 			f"Please check the Default Bank Account setting on the Company."
 		)
 	
