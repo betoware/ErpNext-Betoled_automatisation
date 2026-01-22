@@ -19,7 +19,9 @@ def fetch_and_reconcile_all():
 	This task:
 	1. Finds all enabled Ponto Settings
 	2. Fetches new transactions for each company
-	3. Attempts to match transactions with Sales Invoices
+	3. Attempts to match transactions:
+	   - Credit (incoming) transactions with Sales Invoices
+	   - Debit (outgoing) transactions with Purchase Orders
 	4. Creates Payment Entries for exact matches (if auto-reconcile is enabled)
 	5. Creates Payment Match records for matches requiring review
 	"""

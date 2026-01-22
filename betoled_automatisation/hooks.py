@@ -23,16 +23,12 @@ after_migrate = "betoled_automatisation.install.after_migrate"
 
 # Scheduled Tasks
 # ---------------
-# Run payment reconciliation twice a day: at 7:00 and 14:00
+# Run payment reconciliation every 4 hours
 
 scheduler_events = {
 	"cron": {
-		# Run at 7:00 AM every day
-		"0 7 * * *": [
-			"betoled_automatisation.tasks.fetch_and_reconcile_all"
-		],
-		# Run at 2:00 PM (14:00) every day
-		"0 14 * * *": [
+		# Run every 4 hours (at 0:00, 4:00, 8:00, 12:00, 16:00, 20:00)
+		"0 */4 * * *": [
 			"betoled_automatisation.tasks.fetch_and_reconcile_all"
 		]
 	}
