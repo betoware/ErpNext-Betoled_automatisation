@@ -159,56 +159,65 @@ def fetch_transactions_for_company(company):
 					ponto_txn.match_notes = "\n".join(match_result.notes)
 					ponto_txn.save()
 					result["no_match"] += 1
-				
-				elif match_result.is_exact() and settings.auto_reconcile_exact_matches:
-					# Auto-reconcile exact matches
-					try:
-						if match_result.invoice:
-							# Credit transaction -> Sales Invoice
-							payment_entry = processor.create_payment_entry(
-								invoice=match_result.invoice,
-								amount=ponto_txn.amount,
-								transaction=ponto_txn
-							)
-							ponto_txn.matched_invoice = match_result.invoice.name
-						elif match_result.purchase_order:
-							# Debit transaction -> Purchase Order
-							payment_entry = processor.create_payment_entry_for_po(
-								purchase_order=match_result.purchase_order,
-								amount=ponto_txn.amount,
-								transaction=ponto_txn
-							)
-							ponto_txn.matched_purchase_order = match_result.purchase_order.name
-						
-						ponto_txn.status = "Reconciled"
-						ponto_txn.payment_entry = payment_entry.name
-						ponto_txn.match_status = "Exact Match"
+
+				else:
+					# Any match (exact, fuzzy, partial, overpayment): create Payment Entry so invoice goes to Paid
+					create_payment = (
+						(match_result.is_exact() and settings.auto_reconcile_exact_matches)
+						or (not match_result.is_exact())
+					)
+					if create_payment:
+						try:
+							if match_result.invoice:
+								payment_entry = processor.create_payment_entry(
+									invoice=match_result.invoice,
+									amount=ponto_txn.amount,
+									transaction=ponto_txn
+								)
+								ponto_txn.matched_invoice = match_result.invoice.name
+							elif match_result.purchase_order:
+								payment_entry = processor.create_payment_entry_for_po(
+									purchase_order=match_result.purchase_order,
+									amount=ponto_txn.amount,
+									transaction=ponto_txn
+								)
+								ponto_txn.matched_purchase_order = match_result.purchase_order.name
+							else:
+								payment_entry = None
+
+							if payment_entry:
+								ponto_txn.status = "Reconciled"
+								ponto_txn.payment_entry = payment_entry.name
+								ponto_txn.match_status = match_result.match_type
+								ponto_txn.match_notes = "\n".join(match_result.notes)
+								ponto_txn.save()
+								result["matched"] += 1
+								if match_result.is_exact():
+									result["auto_reconciled"] += 1
+								else:
+									result["pending_review"] += 1
+						except Exception as e:
+							_create_payment_match(ponto_txn, match_result)
+							ponto_txn.status = "Matched"
+							ponto_txn.matched_invoice = match_result.invoice.name if match_result.invoice else None
+							ponto_txn.matched_purchase_order = match_result.purchase_order.name if match_result.purchase_order else None
+							ponto_txn.match_status = match_result.match_type
+							ponto_txn.match_notes = "\n".join(match_result.notes) + f"\nPayment creation failed: {e}"
+							ponto_txn.save()
+							result["matched"] += 1
+							result["pending_review"] += 1
+							result["errors"] += 1
+					else:
+						# Exact match but auto_reconcile disabled: only create Payment Match for review
+						_create_payment_match(ponto_txn, match_result)
+						ponto_txn.status = "Matched"
+						ponto_txn.matched_invoice = match_result.invoice.name if match_result.invoice else None
+						ponto_txn.matched_purchase_order = match_result.purchase_order.name if match_result.purchase_order else None
+						ponto_txn.match_status = match_result.match_type
 						ponto_txn.match_notes = "\n".join(match_result.notes)
 						ponto_txn.save()
-						
 						result["matched"] += 1
-						result["auto_reconciled"] += 1
-					except Exception as e:
-						# If payment entry fails, create for review
-						_create_payment_match(ponto_txn, match_result)
-						ponto_txn.status = "Error"
-						ponto_txn.match_notes = f"Auto-reconcile failed: {str(e)}"
-						ponto_txn.save()
-						result["errors"] += 1
-				
-				else:
-					# Create Payment Match for review
-					_create_payment_match(ponto_txn, match_result)
-					
-					ponto_txn.status = "Matched"
-					ponto_txn.matched_invoice = match_result.invoice.name if match_result.invoice else None
-					ponto_txn.matched_purchase_order = match_result.purchase_order.name if match_result.purchase_order else None
-					ponto_txn.match_status = match_result.match_type
-					ponto_txn.match_notes = "\n".join(match_result.notes)
-					ponto_txn.save()
-					
-					result["matched"] += 1
-					result["pending_review"] += 1
+						result["pending_review"] += 1
 				
 			except Exception as e:
 				frappe.log_error(

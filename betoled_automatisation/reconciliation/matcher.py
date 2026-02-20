@@ -150,14 +150,14 @@ class PaymentMatcher:
 			except:
 				self.settings = None
 		
-		# Default settings
-		self.amount_tolerance_percent = 5.0
-		self.fuzzy_match_threshold = 80
+		# Default settings: 10% amount tolerance and 70% name threshold so ~90% matches are accepted
+		self.amount_tolerance_percent = 10.0
+		self.fuzzy_match_threshold = 70
 		self.enable_fuzzy_matching = True
-		
+
 		if self.settings:
-			self.amount_tolerance_percent = flt(self.settings.get("amount_tolerance_percent") or 5.0)
-			self.fuzzy_match_threshold = int(self.settings.get("fuzzy_match_threshold") or 80)
+			self.amount_tolerance_percent = flt(self.settings.get("amount_tolerance_percent") or 10.0)
+			self.fuzzy_match_threshold = int(self.settings.get("fuzzy_match_threshold") or 70)
 			self.enable_fuzzy_matching = bool(self.settings.get("enable_fuzzy_matching", 1))
 	
 	def match_transaction(self, transaction):

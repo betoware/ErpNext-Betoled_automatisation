@@ -153,26 +153,21 @@ def get_reconciliation_summary(company=None, days=30):
 def manually_match_transaction(transaction_name, invoice_name):
 	"""
 	Manually match a transaction to an invoice.
-	
-	Args:
-		transaction_name: Ponto Transaction name
-		invoice_name: Sales Invoice name
-		
-	Returns:
-		dict: Result of the operation
+	Creates a Payment Entry immediately so the invoice goes to Paid.
+	Also creates a Payment Match record for audit.
 	"""
 	frappe.only_for(["System Manager", "Accounts Manager"])
-	
+
 	transaction = frappe.get_doc("Ponto Transaction", transaction_name)
 	invoice = frappe.get_doc("Sales Invoice", invoice_name)
-	
+
 	# Verify company match
 	if transaction.company != invoice.company:
 		frappe.throw(_("Transaction company ({0}) does not match invoice company ({1})").format(
 			transaction.company, invoice.company
 		))
-	
-	# Create Payment Match for review
+
+	# Create Payment Match record (for audit); validate will set transaction_amount etc.
 	match_doc = frappe.get_doc({
 		"doctype": "Payment Match",
 		"ponto_transaction": transaction.name,
@@ -184,19 +179,46 @@ def manually_match_transaction(transaction_name, invoice_name):
 		"notes": f"Manually matched by {frappe.session.user}"
 	})
 	match_doc.insert(ignore_permissions=True)
-	
-	# Update transaction
-	transaction.matched_invoice = invoice.name
-	transaction.status = "Matched"
-	transaction.match_status = "Manual Review Required"
-	transaction.match_notes = f"Manually matched to {invoice.name} by {frappe.session.user}"
-	transaction.save()
-	
-	return {
-		"success": True,
-		"match": match_doc.name,
-		"message": f"Match created. Review and approve at Payment Match {match_doc.name}"
-	}
+
+	# Create Payment Entry immediately so the invoice is marked Paid
+	from betoled_automatisation.reconciliation.processor import create_payment_entry_from_match
+
+	try:
+		payment_entry = create_payment_entry_from_match(match_doc)
+
+		# Update Payment Match: approved with payment entry
+		match_doc.status = "Approved"
+		match_doc.payment_entry = payment_entry.name
+		match_doc.processed_date = frappe.utils.now()
+		match_doc.processed_by = frappe.session.user
+		match_doc.save(ignore_permissions=True)
+
+		# Update Ponto Transaction: reconciled with payment entry
+		transaction.matched_invoice = invoice.name
+		transaction.status = "Reconciled"
+		transaction.payment_entry = payment_entry.name
+		transaction.match_status = "Manual Match"
+		transaction.match_notes = f"Manually matched to {invoice.name} by {frappe.session.user}"
+		transaction.save()
+
+		return {
+			"success": True,
+			"match": match_doc.name,
+			"payment_entry": payment_entry.name,
+			"message": _("Payment Entry {0} created. Invoice is marked as paid.").format(payment_entry.name)
+		}
+	except Exception as e:
+		# Payment Entry failed; keep Match for review
+		transaction.matched_invoice = invoice.name
+		transaction.status = "Matched"
+		transaction.match_status = "Manual Review Required"
+		transaction.match_notes = f"Manually matched to {invoice.name}. Payment creation failed: {e}"
+		transaction.save()
+		frappe.throw(
+			_("Match created but Payment Entry failed: {0}. You can approve the match at Payment Match {1}.").format(
+				str(e), match_doc.name
+			)
+		)
 
 
 @frappe.whitelist()
