@@ -225,7 +225,91 @@ def fetch_transactions_for_company(company):
 					message=f"Transaction ID: {txn_data.get('id')}\nError: {str(e)}\n\n{frappe.get_traceback()}"
 				)
 				result["errors"] += 1
-		
+
+		# Re-match existing Ponto Transactions that are still Pending/Matched without a Payment Entry
+		# (e.g. transaction was created before the invoice existed, or matching improved)
+		existing_pending = frappe.get_all(
+			"Ponto Transaction",
+			filters={
+				"company": company,
+				"credit_debit": ["in", ["Credit", "Debit"]],
+				"status": ["in", ["Pending", "Matched"]],
+			},
+			fields=["name", "payment_entry"]
+		)
+		for row in existing_pending:
+			if row.get("payment_entry"):
+				continue
+			try:
+				ponto_txn = frappe.get_doc("Ponto Transaction", row.name)
+				match_result = matcher.match_transaction(ponto_txn)
+				if match_result.match_type == MatchResult.NO_MATCH:
+					continue
+				# Found a match; create Payment Entry (or link existing if invoice already paid) and update transaction
+				try:
+					if match_result.invoice:
+						inv_name = match_result.invoice.name if hasattr(match_result.invoice, "name") else match_result.invoice.get("name")
+						ponto_txn.matched_invoice = inv_name
+						invoice_doc = frappe.get_doc("Sales Invoice", inv_name)
+						if invoice_doc.status == "Paid":
+							# Invoice already paid: link only to a Payment Entry that is not yet linked to another Ponto Transaction
+							# (avoids linking recurring payments to the same invoice’s payment)
+							pe_refs = frappe.get_all(
+								"Payment Entry Reference",
+								filters={"reference_doctype": "Sales Invoice", "reference_name": inv_name},
+								fields=["parent"],
+								order_by="creation desc"
+							)
+							payment_entry_name = None
+							for ref in pe_refs:
+								pe_name = ref.parent
+								# Only use this PE if no other Ponto Transaction is already linked to it
+								already_linked = frappe.db.exists(
+									"Ponto Transaction",
+									{"payment_entry": pe_name, "name": ["!=", ponto_txn.name]}
+								)
+								if not already_linked:
+									payment_entry_name = pe_name
+									break
+							if payment_entry_name:
+								ponto_txn.status = "Reconciled"
+								ponto_txn.payment_entry = payment_entry_name
+								ponto_txn.match_status = match_result.match_type
+								ponto_txn.match_notes = "\n".join(match_result.notes)
+								ponto_txn.save()
+								result["matched"] += 1
+							continue  # already paid: skip creating a new Payment Entry
+						payment_entry = processor.create_payment_entry(
+							invoice=match_result.invoice,
+							amount=ponto_txn.amount,
+							transaction=ponto_txn
+						)
+					elif match_result.purchase_order:
+						payment_entry = processor.create_payment_entry_for_po(
+							purchase_order=match_result.purchase_order,
+							amount=ponto_txn.amount,
+							transaction=ponto_txn
+						)
+						ponto_txn.matched_purchase_order = match_result.purchase_order.name if hasattr(match_result.purchase_order, "name") else match_result.purchase_order.get("name")
+					else:
+						continue
+					ponto_txn.status = "Reconciled"
+					ponto_txn.payment_entry = payment_entry.name
+					ponto_txn.match_status = match_result.match_type
+					ponto_txn.match_notes = "\n".join(match_result.notes)
+					ponto_txn.save()
+					result["matched"] += 1
+				except Exception as e:
+					frappe.log_error(
+						title="Re-match: Payment creation failed",
+						message=f"Ponto Transaction {ponto_txn.name}: {e}\n\n{frappe.get_traceback()}"
+					)
+			except Exception as e:
+				frappe.log_error(
+					title="Re-match: Error processing existing transaction",
+					message=f"Ponto Transaction {row.name}: {e}\n\n{frappe.get_traceback()}"
+				)
+
 		# Update last sync time
 		frappe.db.set_value("Ponto Settings", settings.name, "last_sync", now_datetime())
 		frappe.db.commit()

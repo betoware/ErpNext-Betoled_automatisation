@@ -226,7 +226,10 @@ class PaymentProcessor:
 		"""
 		if isinstance(invoice, str):
 			invoice = frappe.get_doc("Sales Invoice", invoice)
-		
+		elif not hasattr(invoice, "debit_to"):
+			# Matcher may pass a dict from SQL; ensure we have a full doc
+			invoice = frappe.get_doc("Sales Invoice", invoice.get("name"))
+
 		# Get bank account details
 		bank_account_name = self.default_bank_account
 		if not bank_account_name:
